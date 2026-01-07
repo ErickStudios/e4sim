@@ -20,19 +20,13 @@ ram = [0] * 327432
 
 offset = 0xB82
 
-def accion(id):
-    if id == 1:
-        print("Puerto 1 activado")
-    elif id == 2:
-        print("Puerto 2 activado")
-    elif id == 3:
-        print("Puerto 3 activado")
-
 # tipo de rm
 class Hardware:
-    def __init__(self, update, disconnect):
+    def __init__(self, update, disconnect, io_in=None, io_out=None):
         self.update = update
         self.disconnect = disconnect
+        self.input = io_in
+        self.outpud = io_out
 # clase de la VM
 class VM:
     def __init__(self, mem_size=65536):
@@ -51,6 +45,7 @@ class VM:
               }
         self.pc = 0
         self.pc_fetch:Erick4004SimuApp = None
+        self.in_halt_mode = False
 
     def fetch(self, program):
         op = program[self.pc]; self.pc += 1
@@ -66,6 +61,16 @@ class VM:
         return v
 
     def step(self, program):
+        print(self.pc)
+        hlt_no_direction = 0xac00
+        interruption_flag_direction = 0xac01
+
+        if self.mem[hlt_no_direction] == 1 and self.in_halt_mode:
+            self.in_halt_mode = False
+
+        if self.in_halt_mode:
+            return  # no hace nada, CPU detenida
+
         op = self.fetch(program)
         if op == 0x01:  # mov dst,src (nibbles)
             operand = self.read_byte(program)
@@ -124,11 +129,6 @@ class VM:
             addr = self.read_u32_be(program)
             self._set_reg(dst, self.mem[addr])
 
-        elif op == 0x12:  # movm addr,src (opcional)
-            src = self.read_byte(program)
-            addr = self.read_u32_be(program)
-            self.mem[addr] = self._get_reg(src)
-
         elif op == 0x09:  # add dst,src
             operand = self.read_byte(program)
             dst = (operand >> 4) & 0xF
@@ -177,12 +177,18 @@ class VM:
             register = self.read_byte(program)
             print(self._get_reg(register))
 
+        elif op == 0x11: #hlt
+            self.in_halt_mode = True
+        elif op == 0x12: #sti
+            self.mem[interruption_flag_direction] = 1
+        elif op == 0x13: #cli
+            self.mem[interruption_flag_direction] = 1
         else:
             self.pc += 1
 
     def _get_reg(self, code):
         # mapa inverso según registers
-        table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp'}
+        table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
         name = table.get(code)
         return self.reg[name] if name else 0
 
@@ -199,7 +205,7 @@ class VM:
         # enviar dato
         self.pc_fetch._io_outpud_(reg1, reg2)
     def _set_reg(self, code, value):
-        table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp'}
+        table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
         name = table.get(code)
         if name: self.reg[name] = value & 0xFF
 # clase de la aplicacion
@@ -459,8 +465,6 @@ class Erick4004SimuApp:
                 hw.update(self.ports[port], self.VirtualMachine.mem)
     # cargar hardware
     def conect_hardware(self, index: int):
-        print("Index recibido:", index)
-        print("Hardwares:", self.hardwares)
         fl = filedialog.askopenfilename(
             title="Selecciona un archivo",
             filetypes=(("codigo python", "*.py"), ("Todos los archivos", "*.*"))
@@ -468,7 +472,7 @@ class Erick4004SimuApp:
         self.load_hardware(self.ports[index - 1], index-1, open(fl,"rb").read())
     # cargar hardware virutal
     def load_hardware(self, Place: tk.Button, id: int, hardware_code: str):
-        namespace = {}
+        namespace = {"__builtins__": __builtins__}
         exec(hardware_code, namespace)
 
         # inicializar hardware
@@ -478,6 +482,8 @@ class Erick4004SimuApp:
         # asignar callbacks
         self.hardwares[id].update = namespace.get("update")
         self.hardwares[id].disconnect = namespace.get("disconect")
+        self.hardwares[id].input = namespace.get("hardware_in")
+        self.hardwares[id].outpud = namespace.get("hardware_out")
         for port, hw in enumerate(self.hardwares):
             if hw and hw.update:
                 hw.update(self.ports[port], self.VirtualMachine.mem)  # ejemplo de RAM
@@ -522,9 +528,18 @@ class Erick4004SimuApp:
     # para enviar datos a un dispositivo
     def _io_outpud_(self, port:int, data:int):
         self.pbc(port=port)
+        if (port == 0):
+            pass
+        if self.hardwares[port-1].outpud:
+            self.hardwares[port-1].outpud(self.ports[port-1], data)
+        else:
+            print("dont call")
     # para recibir datos de un dispositivo
     def _io_input_(self, port:int) -> int:
         self.pbc(port=port)
+        if (port == 0):
+            return 0
+        return self.hardwares[port-1].input(self.ports[port-1])
 
 # Ejecutar la app
 app = Erick4004SimuApp()

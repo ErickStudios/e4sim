@@ -7,7 +7,8 @@ registers = {
     "f": 0x6,
     "ds": 0x7,
     "cycl": 0x8,
-    "sp":0x9
+    "sp":0x9,
+    "off":0xA
 }
 
 class AssemblerContext:
@@ -17,11 +18,14 @@ class AssemblerContext:
         # Puntero actual del segmento de datos (ds)
         self.ds_pointer = 0x00000000
 
-    def add_variable(self, name, size):
-        # Guardar variable en la tabla de símbolos
-        self.symbols[name] = self.ds_pointer
-        # Avanzar el puntero del segmento de datos
-        self.ds_pointer += size
+    def add_variable(self, name, size, direction=None):
+        if direction is None:
+            # Guardar variable en la tabla de símbolos
+            self.symbols[name] = self.ds_pointer
+            # Avanzar el puntero del segmento de datos
+            self.ds_pointer += size
+        else:
+            self.symbols[name] = direction
         return self.symbols[name]
 
     def get_address(self, name):
@@ -222,7 +226,7 @@ def assemble_line(line, context:AssemblerContext, len:int):
 
         return prs
     elif instr == "db":
-        name, rest = parts[1].split(",")
+        name, rest, direction = parts[1].split(",")
         size = int(rest)
 
         # Registrar variable en el contexto
@@ -245,6 +249,13 @@ def assemble_line(line, context:AssemblerContext, len:int):
     elif instr == "div":
         dst, src = parts[1].split(",")
         return assemble_div(dst, src)
+
+    elif instr == "hlt":
+        return [0x11]
+    elif instr == "sti":
+        return [0x12]
+    elif instr == "cli":
+        return [0x13]
     else:
         return []
 def instr_length(line, context):
@@ -290,8 +301,10 @@ def instr_length(line, context):
         return 2
     elif instr == "db":
         return 0
+    elif instr == "cli" or instr == "sti" or instr == "hlt":
+        return 1
     else:
-        raise ValueError(f"Instrucción desconocida: {line}")
+        raise ValueError(f"Instrucción desconocida: " + line)
 def assamble_code(code:str):
     content = code.replace("\r", "\n").split("\n")
     context = AssemblerContext()

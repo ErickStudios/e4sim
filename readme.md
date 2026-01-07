@@ -1,0 +1,1 @@
+Siempre quise crear mi propia PC con sus propios componentes, e4sim es un simulador de una Erick4004, una pc emulada con mi propia arquitectura, con mi propio conjunto de instrucciones y mi propio sistema de puertos
