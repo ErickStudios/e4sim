@@ -57,8 +57,19 @@ def assemble_solve(syntax: str, context: AssemblerContext):
         return "0"
 
 # mover datos
-def assemble_mov(dst, src):
-    opcode = 0x01
+def assemble_mov(dst, src=None):
+    if src is None: # mov src -> mem[ds+(off+=4)] = src;
+        opcode = 0x1D
+        operand = (registers[dst])
+        return [opcode, operand]
+    else:           # mov dst,src -> coppy src val to dst
+        opcode = 0x01
+        operand = (registers[dst] << 4) | registers[src]
+        return [opcode, operand]
+
+# comparar datos
+def assemble_cmp(dst, src):
+    opcode = 0x18
     operand = (registers[dst] << 4) | registers[src]
     return [opcode, operand]
 
@@ -81,6 +92,12 @@ def assemble_ivar(name, size, direction):
     dir_bytes = list(direction.to_bytes(4, "big"))
     return [opcode, size_byte] + dir_bytes
 
+# put long
+def assemble_pul(long: int):
+    opcode = 0x15
+    dir_bytes = list(long.to_bytes(4, "big"))
+    return [opcode] + dir_bytes
+
 # resetea off
 def assemble_align(nm):
     opcode = 0x03
@@ -93,6 +110,12 @@ def assemble_pub(pub):
     operand = pub
     return [opcode, operand]
 
+# pubr
+def assemble_pubr(pub):
+    opcode = 0x14
+    operand = pub
+    return [opcode, operand]
+
 # push
 def assemble_push(register):
     opcode = 0x05
@@ -102,6 +125,12 @@ def assemble_push(register):
 # gub
 def assemble_gub(register):
     opcode = 0x0F
+    operand = registers[register]
+    return [opcode, operand]
+
+# gul
+def assemble_gul(register):
+    opcode = 0x16
     operand = registers[register]
     return [opcode, operand]
 
@@ -119,6 +148,31 @@ def assemble_pop(register):
 
 def assemble_call(addr: int):
     opcode = 0x7
+    dir_bytes = list(addr.to_bytes(4, "big"))
+    return [opcode] + dir_bytes
+
+def assemble_cq(addr: int):
+    opcode = 0x19
+    dir_bytes = list(addr.to_bytes(4, "big"))
+    return [opcode] + dir_bytes
+
+def assemble_cnq(addr: int):
+    opcode = 0x1A
+    dir_bytes = list(addr.to_bytes(4, "big"))
+    return [opcode] + dir_bytes
+
+def assemble_cg(addr: int):
+    opcode = 0x1B
+    dir_bytes = list(addr.to_bytes(4, "big"))
+    return [opcode] + dir_bytes
+
+def assemble_cng(addr: int):
+    opcode = 0x1C
+    dir_bytes = list(addr.to_bytes(4, "big"))
+    return [opcode] + dir_bytes
+
+def assemble_loop(addr: int):
+    opcode = 0x17
     dir_bytes = list(addr.to_bytes(4, "big"))
     return [opcode] + dir_bytes
 
@@ -163,9 +217,29 @@ def assemble_line(line, context:AssemblerContext, len:int):
         return []
 
     elif instr == "mov":
-        dst, src = parts[1].split(",")
-        return assemble_mov(dst, src)
-    
+        prts:list[str] = parts[1].split(",")
+        dst = prts[0]
+        is_pub_alias = False
+        is_pul_alias = False
+        if dst.startswith("[byte]"):
+            is_pub_alias = True
+        elif dst.startswith("[dword]"):
+            is_pul_alias = True
+
+        if not is_pub_alias and not is_pul_alias:
+            src = None
+            if prts.__len__() == 2:
+                src = prts[1]
+            return assemble_mov(dst, src)
+        elif is_pul_alias:
+            return assemble_pul(assemble_solve(dst[7:], context))
+        else:
+            expretion = dst[6:]
+            if expretion in registers:
+                return assemble_pubr(assemble_solve(dst[6:], context))
+            else:
+                return assemble_pub(assemble_solve(dst[6:], context))
+
     elif instr == "in":
         dst, src = parts[1].split(",")
         return assemble_in(dst, src)
@@ -211,6 +285,21 @@ def assemble_line(line, context:AssemblerContext, len:int):
     elif instr == "call":
         addr = int(assemble_solve(parts[1].split(",")[0], context)) 
         return assemble_call(addr)
+    elif instr == "cq":
+        addr = int(assemble_solve(parts[1].split(",")[0], context)) 
+        return assemble_cq(addr)
+    elif instr == "cnq":
+        addr = int(assemble_solve(parts[1].split(",")[0], context)) 
+        return assemble_cnq(addr)
+    elif instr == "cg":
+        addr = int(assemble_solve(parts[1].split(",")[0], context)) 
+        return assemble_cg(addr)
+    elif instr == "cng":
+        addr = int(assemble_solve(parts[1].split(",")[0], context)) 
+        return assemble_cng(addr)
+    elif instr == "loop":
+        addr = int(assemble_solve(parts[1].split(",")[0], context)) 
+        return assemble_loop(addr)
 
     elif instr == "ret":
         return assemble_ret()
@@ -221,14 +310,26 @@ def assemble_line(line, context:AssemblerContext, len:int):
 
         for name in ps:
             name = name.strip()  # quitar espacios
-            prs.append(0x04)     # opcode de pub
-            prs.append(int(assemble_solve(name, context)))  # resolver nombre
+            if name in registers:
+                prs.append(0x014)     # opcode de pubr
+                prs.append(registers[name])  # resolver nombre
+            else:
+                prs.append(0x04)     # opcode de pub
+                prs.append(int(assemble_solve(name, context)))  # resolver nombre
 
         return prs
+    elif instr == "pul": # put long
+        ps = parts[1]
+        value = int(assemble_solve(ps, context))
+        return assemble_pul(value)
     elif instr == "db":
-        name, rest, direction = parts[1].split(",")
+        ar = parts[1].split(",")
+        name, rest = ar
+        direction = None
+        if ar.__len__() > 2:
+            direction = ar[2]
         size = int(rest)
-
+    
         # Registrar variable en el contexto
         context.add_variable(name, size)
 
@@ -249,6 +350,10 @@ def assemble_line(line, context:AssemblerContext, len:int):
     elif instr == "div":
         dst, src = parts[1].split(",")
         return assemble_div(dst, src)
+    
+    elif instr == "gul":
+        reg = parts[1]
+        return assemble_gul(reg)
 
     elif instr == "hlt":
         return [0x11]
@@ -256,6 +361,9 @@ def assemble_line(line, context:AssemblerContext, len:int):
         return [0x12]
     elif instr == "cli":
         return [0x13]
+    elif instr == "cmp":
+        dst, src = parts[1].split(",")
+        return assemble_cmp(dst, src)
     else:
         return []
 def instr_length(line, context):
@@ -267,6 +375,22 @@ def instr_length(line, context):
     if instr == "label":
         return 0
     elif instr == "mov":
+        prts:list[str] = parts[1].split(",")
+        dst = prts[0]
+        is_pub_alias = False
+        is_pul_alias = False
+        if dst.startswith("[byte]"):
+            is_pub_alias = True
+        elif dst.startswith("[dword]"):
+            is_pul_alias = True
+
+        if not is_pub_alias and not is_pul_alias:
+            return 2
+        elif is_pul_alias:
+            return 5
+        else:
+            return 2
+    elif instr == "cmp":
         return 2
     elif instr == "in":
         return 2
@@ -274,7 +398,7 @@ def instr_length(line, context):
         return 2
     elif instr == "add":
         return 2
-    elif instr == "gub":
+    elif instr == "gub" or instr == "gul":
         return 2
     elif instr == "dbg":
         return 2
@@ -288,7 +412,7 @@ def instr_length(line, context):
         return 2
     elif instr == "pop":
         return 2
-    elif instr == "call":
+    elif instr == "call" or instr == "loop" or instr == "cq" or instr == "cnq" or instr == "cg" or instr == "cng":
         return 5   # opcode + 4 bytes de dirección
     elif instr == "ret":
         return 1
@@ -301,10 +425,13 @@ def instr_length(line, context):
         return 2
     elif instr == "db":
         return 0
+    elif instr == "pul":
+        return 5
     elif instr == "cli" or instr == "sti" or instr == "hlt":
         return 1
     else:
         raise ValueError(f"Instrucción desconocida: " + line)
+
 def assamble_code(code:str):
     content = code.replace("\r", "\n").split("\n")
     context = AssemblerContext()

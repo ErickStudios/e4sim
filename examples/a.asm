@@ -1,0 +1,2 @@
+mov [byte]0x7
+mov [dword]0x7
