@@ -132,7 +132,7 @@ class VM:
                     self.mem[addr + i] = 0
         elif op == 0x03:  # align n (define: reset off)
             n = self.read_byte(program)
-            self.reg['off'] = 0 if n == 0 else (self.reg['off'] % n)
+            self.reg['off'] = n
 
         elif op == 0x04:  # pub value
             val = self.read_byte(program)
@@ -141,17 +141,28 @@ class VM:
                 self.mem[addr] = val & 0xFF
             self.reg['off'] += 1
 
-        elif op == 0x05:  # push reg
+        elif op == 0x05:  # push reg (i32)
             reg_code = self.read_byte(program)
-            val = self._get_reg(reg_code)
-            self.reg['sp'] -= 1
-            self.mem[self.reg['sp']] = val & 0xFF
+            val = self._get_reg(reg_code) & 0xFFFFFFFF  # asegurar 32 bits
+            # reservar 4 bytes en la pila
+            self.reg['sp'] -= 4
+            # escribir en memoria en orden little-endian
+            self.mem[self.reg['sp']]     = (val >> 0) & 0xFF
+            self.mem[self.reg['sp'] + 1] = (val >> 8) & 0xFF
+            self.mem[self.reg['sp'] + 2] = (val >> 16) & 0xFF
+            self.mem[self.reg['sp'] + 3] = (val >> 24) & 0xFF
 
-        elif op == 0x06:  # pop reg
+        elif op == 0x06:  # pop reg (i32)
             reg_code = self.read_byte(program)
-            val = self.mem[self.reg['sp']]
+            # leer 4 bytes en orden little-endian
+            val = (
+                self.mem[self.reg['sp']] |
+                (self.mem[self.reg['sp'] + 1] << 8) |
+                (self.mem[self.reg['sp'] + 2] << 16) |
+                (self.mem[self.reg['sp'] + 3] << 24)
+            )
             self._set_reg(reg_code, val)
-            self.reg['sp'] += 1
+            self.reg['sp'] += 4
         elif op == 0x7:  # call addr
             addr = self.read_u32_be(program)
             # push dirección de retorno
@@ -222,10 +233,10 @@ class VM:
         elif op == 0x13: #cli
             self.mem[interruption_flag_direction] = 0
         elif op == 0x14: # pubr = pub with register
-            register = self.read_byte(program)
+            val = self.read_byte(program)
             addr = self.reg['ds'] + self.reg['off']
             if 0 <= addr < len(self.mem):
-                self.mem[addr] = self._get_reg(register)
+                self.mem[addr] = self._get_reg(val)
             self.reg['off'] += 1
         elif op == 0x15:  # pul = put long (32 bits)
             val = self.read_u32_be(program)              # lee un entero de 32 bits
@@ -329,8 +340,9 @@ class VM:
         reg1 = self._get_reg(reg1a)
         reg2 = self._get_reg(reg2a)
         self.pc_fetch._pbc_in_()
+        data = self.pc_fetch._io_input_(reg1)
         # enviar dato
-        self._set_reg(reg2, self.pc_fetch._io_input_(reg1))
+        self._set_reg(reg2a, data)
     def _io_out_(self, reg1a, reg2a):
         reg1 = self._get_reg(reg1a)
         reg2 = self._get_reg(reg2a)
@@ -399,9 +411,13 @@ stylepbc = StylePc()
 class Erick4004SimuApp:
     # inicializar
     def __init__(self):
+        self.usb_index = 0
         self.VirtualMachine = VM()
         self.vidoff = 0
         self.VirtualMachine.pc_fetch = self
+        self.usb_buffer = bytearray()
+        self.program_index = 0
+        self.program_buffer = bytearray()
 
         # Ventana principal: el "computador"
         self.root = tk.Tk()
@@ -570,7 +586,7 @@ class Erick4004SimuApp:
         # El puerto USB-C
         USBCPush = tk.Canvas(canvas, width=25, height=25, bg="#C7C7C7", highlightthickness=0)
         USBCPush.place(x=185, y=18)
-        USBCPush.bind("<Button-1>", lambda e: self.waitfile())
+        USBCPush.bind("<Button-1>", lambda e: self.load_usb_image())
 
         chip_x = 180
         canvas.create_rectangle(
@@ -648,6 +664,19 @@ class Erick4004SimuApp:
         self.root.bind("<Key>", self.on_key)
 
         self.update_devices_loop()
+    # cargar un usb
+    def load_usb_image(self):
+        # abrir diálogo para seleccionar archivo .img
+        file_path = filedialog.askopenfilename(
+            title="Selecciona imagen de arranque",
+            filetypes=[("Imagen de disco", "*.img"), ("Todos los archivos", "*.*")]
+        )
+        if file_path:
+            with open(file_path, "rb") as f:
+                # leer todo el archivo y guardarlo en usb_buffer
+                self.usb_buffer = bytearray(f.read())
+            self.usb_index = 0   # reiniciar índice de lectura
+    # abre el debug
     def abrir_debug(self):
         DebugWindow(self.root, self.VirtualMachine)
     # desconecta el hardware
@@ -833,23 +862,49 @@ class Erick4004SimuApp:
         self.root.destroy()
     # para enviar datos a un dispositivo
     def _io_outpud_(self, port:int, data:int):
-        self.pbc(port=port)
         if (port == 0):
-            pass
+            return
+        if (port == 0x30):
+            self.usb_index = 0
+            return
+        if (port == 0x40):
+            self.program_buffer = bytearray()
+            self.program_index = 0
+            return
+        if (port == 0x41):
+            self.program_buffer.append(data)
+            self.program_index += 1
+            return
+        if (port == 0x42):
+            old_pc = self.VirtualMachine.pc
+            self.VirtualMachine.pc = 0
+            self.step(self.program_buffer)
+            #self.VirtualMachine.pc = old_pc
+            return
+        self.pbc(port=port)
         if (port == 4):
             self.VirtualMachine.mem[offset + self.vidoff] = data
             self.vidoff = self.vidoff + 1
-        elif self.hardwares[port-1].outpud:
+        elif not (self.hardwares[port-1].outpud is None):
             self.hardwares[port-1].outpud(self.ports[port-1], data)
         else:
             print("dont call")
     # para recibir datos de un dispositivo
     def _io_input_(self, port:int) -> int:
-        self.pbc(port=port)
         if (port == 0):
             return 0
+        if port == 0x31:
+            if len(self.usb_buffer) == 0:
+                return 0
+            if self.usb_index >= len(self.usb_buffer):
+                return 0
+            val = self.usb_buffer[self.usb_index]
+            self.usb_index += 1
+            return val
         elif (port == 0x20):
             return key_queue.get()
+
+        self.pbc(port=port)
         return self.hardwares[port-1].input(self.ports[port-1])
     # tecla
     def on_key(self, event):
