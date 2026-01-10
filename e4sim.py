@@ -6,6 +6,8 @@ from tkinter import simpledialog
 import e4lib.assambler as e4asm
 import os
 import queue
+import threading
+
 key_queue = queue.Queue()
 
 def color_console(col: int):
@@ -78,7 +80,7 @@ class VM:
             'ds':0, 
             'off':0,
             'cycl':0,
-            'sp':122
+            'sp':mem_size-80
               }
         self.pc = 0
         self.flags = {
@@ -86,6 +88,7 @@ class VM:
             'Greater':False,
             'Less':False
         }
+        self.exit_program = False
         self.pc_fetch:Erick4004SimuApp = None
         self.in_halt_mode = False
     def fetch(self, program):
@@ -327,9 +330,21 @@ class VM:
                 self.mem[addr + 3] = val & 0xFF
 
             self.reg['off'] += 4                          # avanzas 4 posiciones
-        else:
-            self.pc += 1
+        elif op == 0x1E: # inc
+            reg = self.read_byte(program)
 
+            self._set_reg(reg, self._get_reg(reg) + 1)
+        elif op == 0x1F: # dec
+            reg = self.read_byte(program)
+            self._set_reg(reg, self._get_reg(reg) - 1)
+        elif op == 0x20: # int
+            reg = self.read_byte(program)
+            interruption = self._get_reg(reg)
+            self.pc_fetch._io_outpud_(0x53, interruption)
+        elif op == 0x21: # exit
+            self.exit_program = True
+        else:
+            pass
     def _get_reg(self, code):
         # mapa inverso según registers
         table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
@@ -411,6 +426,7 @@ stylepbc = StylePc()
 class Erick4004SimuApp:
     # inicializar
     def __init__(self):
+        self.current_program:list[int] = list()
         self.usb_index = 0
         self.VirtualMachine = VM()
         self.vidoff = 0
@@ -418,6 +434,15 @@ class Erick4004SimuApp:
         self.usb_buffer = bytearray()
         self.program_index = 0
         self.program_buffer = bytearray()
+
+        # la direccion base de la tabla idt, solo es el binario
+        self.idt_table_base = 0
+        # los offsets a las interrupciones
+        self.offsets_idt:dict[int, int] = dict()
+        # actual idt index a setear
+        self.current_idt_index = 0
+        # el tamaño del programa
+        self.current_idt_size = 0
 
         # Ventana principal: el "computador"
         self.root = tk.Tk()
@@ -763,19 +788,21 @@ class Erick4004SimuApp:
     def step(self, program):
         if self.VirtualMachine.pc < len(program): 
             for _ in range(100):  # ejecuta 100 instrucciones por ciclo
+                self.current_program = program
                 if self.VirtualMachine.pc >= len(program):
                     break
                 # si esta en halt y las interrupciones estan activadas
                 if self.VirtualMachine.in_halt_mode and self.VirtualMachine.mem[0xac01] == 1:
                     # si una tecla viene en camino, atraparla
                     if self.keyboard_comming == True:
-                        print("e")
                         # ya no hay teclas en camino
                         self.keyboard_comming = False
                         # activar la flag para despertarlo el siguiente ciclo
                         self.VirtualMachine.mem[0xac00] = 1
                         # la interrupcion que fue, 1=teclado
                         self.VirtualMachine.reg['f'] = 1
+                        # despertar
+                        self.VirtualMachine.in_halt_mode = False
                 self.VirtualMachine.step(program)
             self.canvas.after(1, lambda: self.step(program))
     # crea la ventana de outpud
@@ -867,6 +894,9 @@ class Erick4004SimuApp:
         if (port == 0x30):
             self.usb_index = 0
             return
+        if (port == 0x32):
+            self.usb_index = data
+            return
         if (port == 0x40):
             self.program_buffer = bytearray()
             self.program_index = 0
@@ -875,11 +905,67 @@ class Erick4004SimuApp:
             self.program_buffer.append(data)
             self.program_index += 1
             return
-        if (port == 0x42):
+        if port == 0x42:
             old_pc = self.VirtualMachine.pc
-            self.VirtualMachine.pc = 0
-            self.step(self.program_buffer)
-            #self.VirtualMachine.pc = old_pc
+            old_program = self.current_program
+            def worker():
+                self.current_program = self.program_buffer
+                self.VirtualMachine.pc = 0
+                while self.VirtualMachine.pc < len(self.program_buffer) and not self.VirtualMachine.in_halt_mode:
+                    if self.VirtualMachine.exit_program:
+                        self.VirtualMachine.exit_program = False
+                        break
+                    self.VirtualMachine.step(self.program_buffer)
+                self.current_program = old_program
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join()  # aquí sí espera a que termine
+            self.VirtualMachine.pc = old_pc
+            return
+        if port == 0x50:
+            # El valor escrito al puerto es la dirección base
+            base_addr = data
+
+            prog = self.current_program
+            for i, byte in enumerate(prog):
+                if base_addr + i < len(self.VirtualMachine.mem):
+                    self.VirtualMachine.mem[base_addr + i] = byte
+            self.idt_table_base = base_addr
+            return
+        if port == 0x51:
+            self.current_idt_index = data
+            return
+        if port == 0x52:
+            if self.offsets_idt.get(self.current_idt_index) is None:
+                # crearlo
+                self.offsets_idt.__setitem__(self.current_idt_index, data)
+            # ajustarlo
+            self.offsets_idt[self.current_idt_index] = data 
+            return
+        if (port == 0x53): # int internal
+            size_max = self.current_idt_size
+            start = self.idt_table_base
+            end = (self.idt_table_base)+size_max
+            interruption = self.VirtualMachine.mem[start:end]
+
+            old_pc = self.VirtualMachine.pc
+            def worker():
+                self.VirtualMachine.pc = self.offsets_idt[data]
+                while self.VirtualMachine.pc < len(interruption) and not self.VirtualMachine.in_halt_mode:
+                    if self.VirtualMachine.exit_program:
+                        self.VirtualMachine.exit_program = False
+                        self.VirtualMachine.pc = old_pc
+                        break
+                    self.VirtualMachine.step(interruption)
+
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join()
+
+            self.VirtualMachine.pc = old_pc
+            return
+        if (port == 0x54):
+            self.current_idt_size = data
             return
         self.pbc(port=port)
         if (port == 4):
@@ -901,6 +987,8 @@ class Erick4004SimuApp:
             val = self.usb_buffer[self.usb_index]
             self.usb_index += 1
             return val
+        if port == 0x55:
+            return self.current_program.__len__()
         elif (port == 0x20):
             return key_queue.get()
 

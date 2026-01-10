@@ -5,6 +5,27 @@ class e4fs:
     def __init__(self):
         pass
 
+    @staticmethod
+    def new_partition(executable_bootsector: bytes):
+        # sector de 512 bytes inicializado en cero
+        partition = bytearray(512)
+
+        # --- Header personalizado ---
+        size_hdr = 16  # por ejemplo, 16 bytes de cabecera
+        fs_name = b"e4fs".ljust(8, b' ')     # 8 bytes
+        oem_name = b"ErCrSt".ljust(7, b' ')  # 7 bytes
+
+        # escribir header
+        partition[0] = size_hdr
+        partition[1:1+8] = fs_name
+        partition[9:9+7] = oem_name
+
+        # --- Código ejecutable ---
+        # se copia después del header
+        start_code = size_hdr
+        partition[start_code:start_code+len(executable_bootsector)] = executable_bootsector[:512-size_hdr]
+
+        return partition
     def newfile(self, path: str, content: bytearray) -> bytearray:
         file = bytearray()
         file += len(path).to_bytes(4, "big")
@@ -19,9 +40,7 @@ def create_new_img(usb_img_file, bootsector_executable_file):
         data = f.read()
 
     # crear un bloque de 512 bytes
-    usb_img_bootsector = bytearray(512)
-    usb_img_bootsector[:len(data)] = data[:512]
-
+    usb_img_bootsector = e4fs.new_partition(data)
     # añadir bytes de prueba
     test_bytes = bytearray()
 

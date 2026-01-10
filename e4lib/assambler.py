@@ -116,6 +116,18 @@ def assemble_pubr(pub):
     operand = pub
     return [opcode, operand]
 
+# inc
+def assemble_inc(pub):
+    opcode = 0x1E
+    operand = registers[pub]
+    return [opcode, operand]
+
+# dec
+def assemble_dec(pub):
+    opcode = 0x1F
+    operand = registers[pub]
+    return [opcode, operand]
+
 # push
 def assemble_push(register):
     opcode = 0x05
@@ -215,6 +227,12 @@ def assemble_line(line, context:AssemblerContext, len:int):
         context.symbols[name] = len
 
         return []
+    
+    elif instr == "inc":
+        return assemble_inc(parts[1].split(",")[0])
+    
+    elif instr == "dec":
+        return assemble_dec(parts[1].split(",")[0])
 
     elif instr == "mov":
         prts:list[str] = parts[1].split(",")
@@ -266,7 +284,7 @@ def assemble_line(line, context:AssemblerContext, len:int):
 
     elif instr == "align":
         ps = (parts[1].split(","))
-        count = int(ps[0])
+        count = int(assemble_solve(ps[0], context))
 
         return assemble_align(count)
 
@@ -335,6 +353,11 @@ def assemble_line(line, context:AssemblerContext, len:int):
 
         return []
     
+    elif instr == "org":
+        ptr = assemble_solve(parts[1], context)
+        context.ds_pointer = ptr
+        return []
+
     elif instr == "add":
         dst, src = parts[1].split(",")
         return assemble_add(dst, src)
@@ -354,7 +377,10 @@ def assemble_line(line, context:AssemblerContext, len:int):
     elif instr == "gul":
         reg = parts[1]
         return assemble_gul(reg)
-
+    elif instr == "iret" or instr == "exit":
+        return [0x21]
+    elif instr == "int":
+        return [0x20, registers[parts[1]]]
     elif instr == "hlt":
         return [0x11]
     elif instr == "sti":
@@ -416,6 +442,8 @@ def instr_length(line, context):
         return 5   # opcode + 4 bytes de dirección
     elif instr == "ret":
         return 1
+    elif instr == "inc" or instr == "dec":
+        return 2
     elif instr == "pub":
         ps = parts[1].split(",")
         return len(ps) * 2   # cada pub = opcode + operando
@@ -427,6 +455,12 @@ def instr_length(line, context):
         return 0
     elif instr == "pul":
         return 5
+    elif instr == "org":
+        return 0
+    elif instr == "int":
+        return 2
+    elif instr == "iret" or instr == "exit":
+        return 1
     elif instr == "cli" or instr == "sti" or instr == "hlt":
         return 1
     else:
@@ -458,4 +492,5 @@ def assamble_code(code:str):
         program += instr_bytes
         pc += len(instr_bytes)
 
+    print("memory ends at: ", context.ds_pointer)
     return bytes(program)

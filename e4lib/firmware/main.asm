@@ -14,11 +14,17 @@ db FD_OEM,17
 ; guardar valores y registros
 db CurrentUint32,4
 ; los puertos importantes para el manejo del i/o basico de cosas como
-; el lector usb y el teclado para cuando no queda mas codigo para ejecutar
-db ImportantPorts,7
+; el lector usb y el teclado para cuando no queda mas codigo para ejecutar,
+; para guardar el codigo del firmware en memoria
+db ImportantPorts,10
 ; el buffer del sector de arranque donde contiene los primeros 512 bytes
 ; del .img que hemos elegido para conectarlo a la usb virtual
 db BufferBootSector,512
+
+; donde termina la pantalla
+org 0x1B22
+
+db MySelf,24320
 
 ; llamar el inicio del firmware
 call firmware_start
@@ -60,6 +66,12 @@ label _loadports_
     mov [byte]0x40          ; resetea el buffer de ejecucion de codigo externo
     mov [byte]0x41          ; añade un byte a el buffer de ejecucion de codigo externo
     mov [byte]0x42          ; el ejecutor, al escribirse en el ejecuta el codigo del buffer de ejecucion de codigo externo
+    mov [byte]0x50          ; el guardador de memoria
+    mov [byte]0x51          ; el puerto para setear el numero de interrupcion
+    mov [byte]0x52          ; el puerto para setear el offset al numero de interrupcion elegida
+    mov [byte]0x54          ; el seteador de tamaño del idt
+    mov [byte]0x55          ; el puerto que devuelve el tamaño de myself
+    mov [byte]0x32          ; para setear el lector
     ret
 
 ; inicializa los registros
@@ -106,9 +118,16 @@ label firmware_start
     ; inicializar
     sti                     ; activar interrupciones
     call init_oem           ; inicializar oem
-    call _loadports_        ; cargar puertos
+    call _loadports_        ; cargar puertos    
     call init_registers     ; inicializar registros
     call init_screen        ; iniciar pantalla
+
+    ; funciones de llamado
+    call memory_idt_load    ; cargar el idt
+
+    align 0
+    mov a,off
+    int a
 
     ; funciones de rutina
     call boot_sector_read   ; leer el sector
@@ -116,26 +135,8 @@ label firmware_start
     ; ejecutar el buffer que se leyo
     call load_code          ; cargar el codigo
 
-    ; stub final, loop de teclado
-    call key_read           ; leer la tecla
-
     cli
     hlt
-
-; leer tecla
-label key_read
-    ; obtener tecla
-    hlt                     ; esperar a que algo pase
-    align 0                 ; 0->off
-    call _getports_         ; obtener puertos
-    gub a                   ; donde lo obtiene
-    in a,b                  ; ponerlo en c
-
-    ; imprimirla
-    align 0                 ; el offset
-    ivar 0xB82,0            ; la pantalla
-    dbg b
-    call key_read           ; tecla
 
 ; disk read segment
 label boot_sector_read
@@ -152,7 +153,6 @@ label boot_sector_read
     align 0                 ; 0->ds
     ivar BufferBootSector,0 ; agarrar el buffer de boot sector
     call sector_read_loop   ; leerlo
-    dbg a
 
     ret
 
@@ -190,7 +190,15 @@ label load_code
     ; setear al buffer leido
     align 0                 ; 0->off
     ivar BufferBootSector,0 ; ds->BufferBootSector
+    gub a                   ; obtenerlo
+    mov off,a               ; añadir al offset
+    sub cycl,a              ; menos ciclos
+    dbg off
+    dbg ds
+
     call load_code_loop     ; llamar al loop
+
+    ret
 
 ; agregar al codigo
 label load_code_loop
@@ -213,7 +221,6 @@ label load_code_loop
     ; mandar dato
     out a,b                 ; mandarlo
     loop load_code_loop     ; loopear
-    dbg a
 
     ; obtener el puerto de ejecucion
     call _getports_         ; obtener puertos
@@ -223,29 +230,102 @@ label load_code_loop
     ; obtener el puerto de ejecucion
     out a,b                 ; no importa el valor
 
-    ret
+    call hang_bugs          ; llamar a el manejador de bugs para continuar por que si hago ret se bugea y salta a codigo arbitrario
 
+; prueba de interrupcion
+label int_disk
+    ; guardar
+    push ds                 ; guardar ds
+    push off                ; guardar off
+    push b                  ; guardar b
+
+    ; cargar
+    pop b                   ; cargar b
+    pop off                 ; cargar off
+    pop ds                  ; cargar ds
+    iret
+
+; para guardar el idt
+label memory_idt_load
+    ; setear tamaño del int
+    call _getports_         ; obtener los puertos
+    align 10                ; el id del seteador de tamaño del idt
+    gub a                   ; guardarlo
+    call _getports_         ; obtener los puertos
+    align 11                ; el id del obtencion del tamaño de myself
+    gub d                   ; obtenerlo
+    in d,c                  ; obtenerlo
+    out a,c                 ; setearlo
+
+    ; obtener datos
+    call _getports_         ; obtener los puertos
+    align 7                 ; el id
+    gub a                   ; guardarlo
+
+    ; guardar direccion de memoria
+    call _loadu32_          ; cargar u32
+    pul MySelf              ; guardar direccion
+    align 0                 ; off->0
+    gul b                   ; guardar en b
+
+    ; llamar al puerto
+    out a,b                 ; a es el puerto, b es la direccion donde lo guardara
+
+    ; cargar puerto de seteo de interrupciones
+    call _getports_         ; obtener los puertos
+    align 8                 ; el id
+    gub a                   ; guardarlo
+    call _loadu32_          ; cargar el u32
+    pub 0                   ; setear a 0
+    align 0                 ; off->0
+    gub b                   ; cargar en b
+    out a,b                 ; resetear el contador
+    
+    ; int de prueba
+    call inc_and_add_idt    ; setear address
+    call _getports_         ; obtener puertos
+    align 9                 ; puerto id 9
+    gub a                   ; setear a
+    call _loadu32_          ; cargar u32
+    pul int_disk            ; cargar la direccion de la funcion dentro del codigo
+    align 0                 ; off->0
+    gul b                   ; el offset
+    out a,b                 ; 
+    ret
+; para añadir e incrementar las interrupciones
+label inc_and_add_idt
+    ; guardar
+    push a                  ; guardar a
+    push ds                 ; guardar ds
+    push off                ; guardar off
+
+    ; obtener puerto
+    call _getports_         ; obtener puertos
+    align 8                 ; el puerto 8
+    gub a                   ; guardar en a
+    out a,f                 ; enviar
+
+    ; siguiente
+    inc f                   ; incrementar
+
+    ; cargar
+    pop off                 ; cargar off
+    pop ds                  ; cargar ds
+    pop a                   ; recuperar a
+    ret
+; para manejar el bug
+label hang_bugs
+label end
+    cli
+    hlt
 
 ; inicializa el oem de el firmware
 label init_oem
-    align 0
-    ivar FD_OEM,17
-    mov [byte]'E'           ;.
-    mov [byte]'r'           ;.
-    mov [byte]'i'           ;.
-    mov [byte]'c'           ;.
-    mov [byte]'k'           ;.
-    mov [byte]'C'           ;.
-    mov [byte]'r'           ;.
-    mov [byte]'a'           ;.
-    mov [byte]'f'           ;.
-    mov [byte]'t'           ;.
-    mov [byte]'S'           ;.
-    mov [byte]'t'           ;.
-    mov [byte]'u'           ;.
-    mov [byte]'d'           ;.
-    mov [byte]'i'           ;.
-    mov [byte]'o'           ;.
-    mov [byte]'s'           ;.
+    ; cargar el oem
+    align 0                 ; 0->off
+    ivar FD_OEM,17          ; ds->FD_OEM
+
+    ; OEM label
+    pub 'E','r','i','c','k','C','r','a','f','t','S','t','u','d','i','o','s'
 
     ret
