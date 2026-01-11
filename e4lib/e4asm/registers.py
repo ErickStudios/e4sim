@@ -1,0 +1,13 @@
+# registros
+e4asm_registers = {
+    "a": 0x1,
+    "b": 0x2,
+    "c": 0x3,
+    "d": 0x4,
+    "e": 0x5,
+    "f": 0x6,
+    "ds": 0x7,
+    "cycl": 0x8,
+    "sp":0x9,
+    "off":0xA
+}

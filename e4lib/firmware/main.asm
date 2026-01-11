@@ -20,6 +20,10 @@ db ImportantPorts,10
 ; el buffer del sector de arranque donde contiene los primeros 512 bytes
 ; del .img que hemos elegido para conectarlo a la usb virtual
 db BufferBootSector,512
+; la linea actual de la pantalla en modo texto para que la linea se guarde
+db VgaCurrentRow,4
+; la colummna actual de la pantalla en modo texto para que la linea se guarde
+db VgaCurrentCol,4
 
 ; donde termina la pantalla
 org 0x1B22

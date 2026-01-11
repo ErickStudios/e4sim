@@ -1,438 +1,62 @@
-import tkinter as tk
-from tkinter import filedialog
-import time
-import importlib.util
-from tkinter import simpledialog
+# el hardware
+from e4lib.e4arch.hardware import e4arch_hardware as Hardware
+# la maquina virtual
+from e4lib.e4arch.arch import e4arch as VM
+# la libreria para dibujar pines
+from e4lib.e4hardware.pbc import e4hardware_pins_style as stylepbc
+# la libreria de e4asm
 import e4lib.assambler as e4asm
+# la libreria de los colores
+from e4lib.e4hardware.vga import e4hardware_vga
+# la app de debug
+from e4lib.e4sim_app.memview import e4simapp_memview as DebugWindow
+
+# el para guis
+import tkinter as tk
+# importar el os
 import os
+# importar el stack
 import queue
+# importar los treadigns
 import threading
 
+# el dialogo de archivos
+filedialog = tk.filedialog
+# el dialogo de texto
+simpledialog = tk.simpledialog
+
+# colores de la consola
+color_console = e4hardware_vga.color_console
+# el queue de las teclas
 key_queue = queue.Queue()
+# el segmento donde esta el vga
+vga_offset = e4hardware_vga.vga_offset
 
-def color_console(col: int):
-    if (col == 0): 
-        return "#000000"
-    elif (col == 1):
-        return "#000066"
-    elif (col == 2):
-        return "#006600"
-    elif (col == 3):
-        return "#006666"
-    elif (col == 4):
-        return "#660000"
-    elif (col == 5):
-        return "#660066"
-    elif (col == 6):
-        return "#666600"
-    elif (col == 7):
-        return "#666666"
-    elif (col == 8):
-        return "#434343"
-    elif (col == 9):
-        return "#6464ff"
-    elif (col == 10):
-        return "#62ff62"
-    elif (col == 11):
-        return "#74ffff"
-    elif (col == 12):
-        return "#ff3434"
-    elif (col == 13):
-        return "#ff00ff"
-    elif (col == 14):
-        return "#ffff00"
-    elif (col == 15):
-        return "#ffffff"
-
+# pide un texto
 def pedir_texto():
     # abre el cuadro de diálogo y retorna lo que el usuario escribió
     texto = simpledialog.askstring("Input", "Escribe tu linea de codigo ensamblador")
+    # retornar
     return texto
-
-def load_module_from_file(path, name):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-ram = [0] * 327432
-
-offset = 0xB82
-
-# tipo de rm
-class Hardware:
-    def __init__(self, update, disconnect, io_in=None, io_out=None):
-        self.update = update
-        self.disconnect = disconnect
-        self.input = io_in
-        self.outpud = io_out
-# clase de la VM
-class VM:
-    def __init__(self, mem_size=65536):
-        self.mem = bytearray(mem_size)
-        self.reg = { 
-            'a':0, 
-            'b':0, 
-            'c':0, 
-            'd':0, 
-            'e':0, 
-            'f':0, 
-            'ds':0, 
-            'off':0,
-            'cycl':0,
-            'sp':mem_size-80
-              }
-        self.pc = 0
-        self.flags = {
-            'Zero':False,
-            'Greater':False,
-            'Less':False
-        }
-        self.exit_program = False
-        self.pc_fetch:Erick4004SimuApp = None
-        self.in_halt_mode = False
-    def fetch(self, program):
-        op = program[self.pc]; self.pc += 1
-        return op
-
-    def read_byte(self, program):
-        b = program[self.pc]; self.pc += 1
-        return b
-
-    def read_u32_be(self, program):
-        v = (program[self.pc]<<24)|(program[self.pc+1]<<16)|(program[self.pc+2]<<8)|program[self.pc+3]
-        self.pc += 4
-        return v
-
-    def step(self, program):
-        hlt_no_direction = 0xac00
-        interruption_flag_direction = 0xac01
-
-        if self.mem[hlt_no_direction] == 1 and self.in_halt_mode:
-            self.mem[hlt_no_direction] = 0
-            self.in_halt_mode = False
-
-        if self.in_halt_mode:
-            return  # no hace nada, CPU detenida
-
-        op = self.fetch(program)
-        if op == 0x01:  # mov dst,src (nibbles)
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            self._set_reg(dst, self._get_reg(src))
-
-        elif op == 0x02:  # ivar size addr
-            size = self.read_byte(program)
-            addr = self.read_u32_be(program)
-
-            # Setear DS al inicio de la variable
-            self.reg['ds'] = addr
-
-            # Inicializar memoria
-            for i in range(size):
-                if addr + i < len(self.mem):
-                    self.mem[addr + i] = 0
-        elif op == 0x03:  # align n (define: reset off)
-            n = self.read_byte(program)
-            self.reg['off'] = n
-
-        elif op == 0x04:  # pub value
-            val = self.read_byte(program)
-            addr = self.reg['ds'] + self.reg['off']
-            if 0 <= addr < len(self.mem):
-                self.mem[addr] = val & 0xFF
-            self.reg['off'] += 1
-
-        elif op == 0x05:  # push reg (i32)
-            reg_code = self.read_byte(program)
-            val = self._get_reg(reg_code) & 0xFFFFFFFF  # asegurar 32 bits
-            # reservar 4 bytes en la pila
-            self.reg['sp'] -= 4
-            # escribir en memoria en orden little-endian
-            self.mem[self.reg['sp']]     = (val >> 0) & 0xFF
-            self.mem[self.reg['sp'] + 1] = (val >> 8) & 0xFF
-            self.mem[self.reg['sp'] + 2] = (val >> 16) & 0xFF
-            self.mem[self.reg['sp'] + 3] = (val >> 24) & 0xFF
-
-        elif op == 0x06:  # pop reg (i32)
-            reg_code = self.read_byte(program)
-            # leer 4 bytes en orden little-endian
-            val = (
-                self.mem[self.reg['sp']] |
-                (self.mem[self.reg['sp'] + 1] << 8) |
-                (self.mem[self.reg['sp'] + 2] << 16) |
-                (self.mem[self.reg['sp'] + 3] << 24)
-            )
-            self._set_reg(reg_code, val)
-            self.reg['sp'] += 4
-        elif op == 0x7:  # call addr
-            addr = self.read_u32_be(program)
-            # push dirección de retorno
-            ret = self.pc
-            self.reg['sp'] -= 4
-            self.mem[self.reg['sp']:self.reg['sp']+4] = ret.to_bytes(4, "big")
-            # saltar
-            self.pc = addr
-
-        elif op == 0x8:  # ret
-            ret = int.from_bytes(self.mem[self.reg['sp']:self.reg['sp']+4], "big")
-            self.reg['sp'] += 4
-            self.pc = ret
-
-        elif op == 0x09:  # add dst,src
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            self._set_reg(dst, self._get_reg(dst) + self._get_reg(src))
-
-        elif op == 0x0A:  # sub dst,src
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            self._set_reg(dst, self._get_reg(dst) - self._get_reg(src))
-
-        elif op == 0x0B:  # mul dst,src
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            self._set_reg(dst, self._get_reg(dst) * self._get_reg(src))
-
-        elif op == 0x0C:  # div dst,src
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            divisor = self._get_reg(src)
-            if divisor != 0:
-                self._set_reg(dst, self._get_reg(dst) // divisor)
-            else:
-                raise ZeroDivisionError("División por cero en VM")
-       
-        elif op == 0x0D:  # in port,reg
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            self._io_in_(dst, src)
-
-        elif op == 0x0E:  # out port,reg
-            operand = self.read_byte(program)
-            dst = (operand >> 4) & 0xF
-            src = operand & 0xF
-            self._io_out_(dst, src)
-
-        elif op == 0x0F:  # gub reg
-            register = self.read_byte(program)
-            self._set_reg(register, self.mem[self.reg["ds"] + self.reg["off"]])
-            self.reg['off'] += 1
-
-        elif op == 0x10: # dbg reg
-            register = self.read_byte(program)
-            print(self._get_reg(register))
-
-        elif op == 0x11: #hlt
-            self.in_halt_mode = True
-        elif op == 0x12: #sti
-            self.mem[interruption_flag_direction] = 1
-        elif op == 0x13: #cli
-            self.mem[interruption_flag_direction] = 0
-        elif op == 0x14: # pubr = pub with register
-            val = self.read_byte(program)
-            addr = self.reg['ds'] + self.reg['off']
-            if 0 <= addr < len(self.mem):
-                self.mem[addr] = self._get_reg(val)
-            self.reg['off'] += 1
-        elif op == 0x15:  # pul = put long (32 bits)
-            val = self.read_u32_be(program)              # lee un entero de 32 bits
-            addr = self.reg['ds'] + self.reg['off']      # calcula dirección base
-
-            if 0 <= addr <= len(self.mem) - 4:           # asegúrate de que hay espacio
-                # descomponer en 4 bytes big-endian
-                self.mem[addr]     = (val >> 24) & 0xFF
-                self.mem[addr + 1] = (val >> 16) & 0xFF
-                self.mem[addr + 2] = (val >> 8)  & 0xFF
-                self.mem[addr + 3] = val & 0xFF
-
-            self.reg['off'] += 4                          # avanzas 4 posiciones
-        elif op == 0x16:  # gul = get long (32 bits)
-            register = self.read_byte(program)              # a qué registro cargar
-            addr = self.reg['ds'] + self.reg['off']         # dirección base
-
-            if 0 <= addr <= len(self.mem):              # asegurar que hay 4 bytes
-                # reconstruir el entero desde 4 bytes big-endian
-                val = (
-                    (self.mem[addr] << 24) |
-                    (self.mem[addr + 1] << 16) |
-                    (self.mem[addr + 2] << 8) |
-                    self.mem[addr + 3]
-                )
-                self._set_reg(register, val)                # guardar en el registro
-
-            self.reg['off'] += 4                            # avanzar 4 posiciones
-        elif op == 0x17:  # loop addr
-            addr = self.read_u32_be(program)   # dirección del bloque
-            if self.reg['cycl'] > 0:
-                self.reg['cycl'] -= 1
-                self.pc = addr                 # saltar al inicio del loop
-            else:
-                pass
-        elif op == 0x18:  # cmp reg1, reg2
-            operand = self.read_byte(program)
-            reg1 = operand & 0xF
-            reg2 = (operand >> 4) & 0xF
-            val1 = self._get_reg(reg1)
-            val2 = self._get_reg(reg2)
-
-            self.flags['Zero'] = (val1 == val2)
-            self.flags['Greater'] = (val1 > val2)
-            self.flags['Less'] = (val1 < val2)
-
-        elif op == 0x19:  # cq addr
-            addr = self.read_u32_be(program)
-            if self.flags['Zero']:
-                ret = self.pc
-                self.reg['sp'] -= 4
-                self.mem[self.reg['sp']:self.reg['sp']+4] = ret.to_bytes(4, "big")
-                self.pc = addr
-
-        elif op == 0x1A:  # cnq addr
-            addr = self.read_u32_be(program)
-            if not self.flags['Zero']:
-                ret = self.pc
-                self.reg['sp'] -= 4
-                self.mem[self.reg['sp']:self.reg['sp']+4] = ret.to_bytes(4, "big")
-                self.pc = addr
-
-        elif op == 0x1B:  # cg addr
-            addr = self.read_u32_be(program)
-            if self.flags['Greater']:
-                ret = self.pc
-                self.reg['sp'] -= 4
-                self.mem[self.reg['sp']:self.reg['sp']+4] = ret.to_bytes(4, "big")
-                self.pc = addr
-
-        elif op == 0x1C:  # cng addr
-            addr = self.read_u32_be(program)
-            if not self.flags['Greater']:
-                ret = self.pc
-                self.reg['sp'] -= 4
-                self.mem[self.reg['sp']:self.reg['sp']+4] = ret.to_bytes(4, "big")
-                self.pc = addr
-        elif op == 0x1D:  # mov src
-            reg = self.read_byte(program)              # lee el registo
-            val = self._get_reg(reg)                    # lee el valor
-            addr = self.reg['ds'] + self.reg['off']      # calcula dirección base
-
-            if 0 <= addr <= len(self.mem) - 4:           # asegúrate de que hay espacio
-                # descomponer en 4 bytes big-endian
-                self.mem[addr]     = (val >> 24) & 0xFF
-                self.mem[addr + 1] = (val >> 16) & 0xFF
-                self.mem[addr + 2] = (val >> 8)  & 0xFF
-                self.mem[addr + 3] = val & 0xFF
-
-            self.reg['off'] += 4                          # avanzas 4 posiciones
-        elif op == 0x1E: # inc
-            reg = self.read_byte(program)
-
-            self._set_reg(reg, self._get_reg(reg) + 1)
-        elif op == 0x1F: # dec
-            reg = self.read_byte(program)
-            self._set_reg(reg, self._get_reg(reg) - 1)
-        elif op == 0x20: # int
-            reg = self.read_byte(program)
-            interruption = self._get_reg(reg)
-            self.pc_fetch._io_outpud_(0x53, interruption)
-        elif op == 0x21: # exit
-            self.exit_program = True
-        else:
-            pass
-    def _get_reg(self, code):
-        # mapa inverso según registers
-        table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
-        name = table.get(code)
-        return self.reg[name] if name else 0
-
-    def _io_in_(self, reg1a, reg2a):
-        reg1 = self._get_reg(reg1a)
-        reg2 = self._get_reg(reg2a)
-        self.pc_fetch._pbc_in_()
-        data = self.pc_fetch._io_input_(reg1)
-        # enviar dato
-        self._set_reg(reg2a, data)
-    def _io_out_(self, reg1a, reg2a):
-        reg1 = self._get_reg(reg1a)
-        reg2 = self._get_reg(reg2a)
-        self.pc_fetch._pbc_in_()
-        # enviar dato
-        self.pc_fetch._io_outpud_(reg1, reg2)
-    def _set_reg(self, code, value):
-        table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
-        name = table.get(code)
-        if name: self.reg[name] = value
-class DebugWindow(tk.Toplevel):
-    def __init__(self, master, vm):
-        super().__init__(master)
-        self.vm = vm
-        self.title("Debug - Memoria")
-        self.configure(bg="#1E1E1E")
-        
-        # widget para mostrar la memoria
-        self.text = tk.Text(self, width=80, height=25, bg="#1E1E1E", fg="#ffffff")
-        self.text.pack(fill="both", expand=True)
-        
-        # refrescar cada cierto tiempo
-        self.update_mem()
-    def update_mem(self):
-        # guardar posición actual
-        pos = self.text.yview()
-
-        self.text.delete("1.0", tk.END)
-        for i in range(0, len(self.vm.mem), 16):
-            bloque = self.vm.mem[i:i+16]
-
-            # hexadecimales
-            hexs = " ".join(f"{b:02X}" for b in bloque)
-
-            # caracteres ASCII (imprimibles → mostrar, no imprimibles → '.')
-            chars = "".join(chr(b) if 32 <= b < 127 else "." for b in bloque)
-
-            # insertar línea estilo hex dump
-            self.text.insert(tk.END, f"{i:04X}: {hexs:<48} {chars}\n")
-
-        # restaurar posición
-        self.text.yview_moveto(pos[0])
-
-        self.after(500, self.update_mem)# clase de estilos
-class StylePc:
-    def __init__(self):
-        pass
-    def _make_serpiente1_(self, canvas: tk.Canvas, x: int, y: int, prts: int):
-        for i in range(prts):
-            self.make_pin(canvas, x + (i * 6), y)
-    def make_pin(self, canvas: tk.Canvas, x: int, y: int):
-        # dibuja la base del pin (pequeño rectángulo)
-        canvas.create_rectangle(x - 2, y + 2, x + 2, y + 4, fill="#363636")
-
-        # dibuja la línea vertical del pin
-        canvas.create_line(
-            x, y - 2, x, y + 8,
-            fill="#282828",     # color de la línea
-            width=3,            # grosor del trazo
-            dash=(4, 2),        # estilo punteado (opcional)
-            capstyle="round",   # extremos: 'butt', 'round', 'projecting'
-            joinstyle="round"   # unión de segmentos (si hay más puntos)
-        )
-stylepbc = StylePc()
 # clase de la aplicacion
 class Erick4004SimuApp:
     # inicializar
     def __init__(self):
+        # el programa actual
         self.current_program:list[int] = list()
+        # el usb index
         self.usb_index = 0
+        # la maquina virtual
         self.VirtualMachine = VM()
+        # el vidoff
         self.vidoff = 0
+        # la pc donde esta la vm
         self.VirtualMachine.pc_fetch = self
+        # el usb buffer
         self.usb_buffer = bytearray()
+        # el index de programa
         self.program_index = 0
+        # el buffer de programa
         self.program_buffer = bytearray()
 
         # la direccion base de la tabla idt, solo es el binario
@@ -444,82 +68,119 @@ class Erick4004SimuApp:
         # el tamaño del programa
         self.current_idt_size = 0
 
-        # Ventana principal: el "computador"
+        # Ventana principal
         self.root = tk.Tk()
+        # el titulo
         self.root.title("e4sim - pc virtual")
+        # geometria
         self.root.geometry("450x240")
+        # el fondo
         self.root.configure(bg="#1E1E1E")
 
+        # barra de menu
         menubar = tk.Menu(self.root, tearoff=0)
+        # la barra de menu de hardware
         hardware_menu = tk.Menu(menubar, tearoff=0)
+        # el menu de herramientas
         tools_menu = tk.Menu(menubar, tearoff=0)
 
+        # remover un hardware
         remover_hardware = tk.Menu(menubar, tearoff=0)
+        # añadir el menu de remover hardware
         hardware_menu.add_cascade(label="Remover", menu=remover_hardware)
+        # comando de adaptador de video
         tools_menu.add_command(label="Adaptador de video",command=self.crear_output)
+        # comando de abrir codigo
         tools_menu.add_command(label="Abrir codigo",command=self.waitfile)
+        # comando de abrir inspector de memoria
         tools_menu.add_command(label="Abrir inspector de memoria",command=self.abrir_debug)
-
+        # menu de remover hardware
         for i in range(3):
-            remover_hardware.add_command(
-                label=str(i+1),
-                command=lambda idx=i: self.disconect_hardware(1+idx)
-            )
-
+            # el comando de hardware
+            remover_hardware.add_command(label=str(i+1),command=lambda idx=i: self.disconect_hardware(1+idx))
+        # añadir el menu de hardware
         menubar.add_cascade(label="Hardware", menu=hardware_menu)
+        # añadir el menu de tools
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
+        # configurar la barra de menu
         self.root.config(menu=menubar)
 
+        # el label 0
         label0 = tk.Label(self.root, text="\n", background="#1E1E1E", foreground="white")
+        # poner el label
         label0.pack(pady=0.1)
 
+        # el pc
         canvas = tk.Canvas(self.root, width=310, height=140, bg="#3E6321")
+        # poner el pc
         canvas.pack()
 
-        stylepbc._make_serpiente1_(canvas, 0, 130, 10)
-        stylepbc._make_serpiente1_(canvas, 0+(((6*10)+5)*1), 130, 10)
-        stylepbc._make_serpiente1_(canvas, 0+(((6*10)+5)*2.8), 130, 10)
-        stylepbc._make_serpiente1_(canvas, 0+(((6*10)+5)*3.8), 130, 10)
+        # el paso
+        step = (6*10) + 5
+        # ir viendo
+        for f in [0, 1, 2.8, 3.8]:
+            # x
+            x = 0 + step * f
+            # hacer los pins
+            stylepbc._make_serpiente1_(canvas, x, 130, 10)
 
-        stylepbc._make_serpiente1_(canvas, 0, 4, 10)
-        stylepbc._make_serpiente1_(canvas, 0+(((6*10)+5)*1), 4, 10)
-        stylepbc._make_serpiente1_(canvas, 0+(((6*10)+5)*2.8), 4, 10)
-        stylepbc._make_serpiente1_(canvas, 0+(((6*10)+5)*3.8), 4, 10)
+        # el paso
+        step = (6*10) + 5
+        # ir viendo
+        for f in [0, 1, 2.8, 3.8]:
+            # x
+            x = 0 + step * f
+            # hacer los pins
+            stylepbc._make_serpiente1_(canvas, x, 4, 10)
 
+        # las instrucciones para que no se pierdan
         label1 = tk.Label(self.root, text="Seleccione un componente para modificarlo", background="#1E1E1E", foreground="white")
+        # el pack
         label1.pack(pady=0.1)
 
+        # los hardwares
         self.hardwares = [
             Hardware(lambda place, ram: None, lambda place: None),
             Hardware(lambda place, ram: None, lambda place: None),
             Hardware(lambda place, ram: None, lambda place: None),
         ]
-        print("Inicializado hardwares:", self.hardwares)
+
+        # el codigo original del circuitos pbc
         self.original_pbc_color = "#64A136"
+        # el color cuando pasa energia a los cables pbc
         self.passing_energy_pbc_color = "#89D44F"
 
+        # si viene una tecla
         self.keyboard_comming = False
+        # el canvas
         self.canvas = canvas
+        # conexiones pbc 0
         self.pbc_conections = []
+        # conexiones pbc 1
         self.pbc_port1_conections = []
+        # conexiones pbc 2
         self.pbc_port2_conections = []
+        # conexiones pbc 3
         self.pbc_port3_conections = []
+        # conexiones pbc 4
         self.pbv_port4_conections = []
+        # conexiones pbc 5
         self.pbv_port5_conections = []
 
         # simulando los circuitos impresos de I/O, para el procesador recibir puertos de la usb, y la usb recibir datos
         # del prosesador
+
         for i in range(5):
             # crear linea
             line_id = canvas.create_line(3, (20 + (i * 5)), 200, (20 + ((i * 5))), fill="#64A136", width=2)
+            # añadir a los pbc
             self.pbc_conections.append(line_id)
-            
         for i in range(5):
             # crear linea
             line_id = canvas.create_line((210+3), (20 + (i * 5)), (210+40), (20 + ((i * 5))), fill="#64A136", width=2)
+            # añadir a los pbc
             self.pbv_port4_conections.append(line_id)
-
         for i in range(5):
             # crear línea vertical
             line_id = canvas.create_line(
@@ -527,13 +188,13 @@ class Erick4004SimuApp:
                 225 + (i * 5), 125,        # mismo x, y final
                 fill="#64A136", width=2
             )
+            # añadir a los pbc
             self.pbv_port4_conections.append(line_id)
-
         for i in range(5):
             # crear linea
             line_id = canvas.create_line((10+3), (105 + (i * 5)), (285), (105 + ((i * 5))), fill="#64A136", width=2)
+            # añadir a los pbc
             self.pbv_port5_conections.append(line_id)
-        
         for i in range(5):
             # crear línea vertical
             line_id = canvas.create_line(
@@ -541,8 +202,8 @@ class Erick4004SimuApp:
                 10 + (i * 5), 125,        # mismo x, y final
                 fill="#64A136", width=2
             )
+            # añadir a los pbc
             self.pbv_port5_conections.append(line_id)
-
         for i in range(5):
             # crear línea vertical
             line_id = canvas.create_line(
@@ -550,8 +211,8 @@ class Erick4004SimuApp:
                 70 + (i * 5), 80,        # mismo x, y final
                 fill="#64A136", width=2
             )
+            # añadir a los pbc
             self.pbc_port1_conections.append(line_id)
-
         for i in range(5):
             # crear línea vertical
             line_id = canvas.create_line(
@@ -559,8 +220,8 @@ class Erick4004SimuApp:
                 115 + (i * 5), 80,        # mismo x, y final
                 fill="#64A136", width=2
             )
+            # añadir a los pbc
             self.pbc_port2_conections.append(line_id)
-
         for i in range(5):
             # crear línea vertical
             line_id = canvas.create_line(
@@ -568,25 +229,25 @@ class Erick4004SimuApp:
                 160 + (i * 5), 80,        # mismo x, y final
                 fill="#64A136", width=2
             )
+            # añadir a los pbc
             self.pbc_port3_conections.append(line_id)
 
+        # posiciones
         chip_x, chip_y = 9, 18+5
+        # el chip
         chip_w, chip_h = 30, 20
 
-        # El CPU
-        canvas.create_rectangle(
-            0,
-            10+5,
-            40,
-            50+5,
-            fill="#2C2C2C"
-        )
+        # La soldadura del mainchip
+        canvas.create_rectangle(0,10+5,40,50+5,fill="#2C2C2C")
+        # el mainchip
         CPUBox = tk.Canvas(canvas, width=25, height=25, bg="#FF970E", highlightthickness=0)
+        # poner el mainchip
         CPUBox.place(x=chip_x, y=chip_y)
+        # que ejecuta codigo
         CPUBox.bind("<Button-1>", lambda e: self.excode())
 
+        # posicion de x
         chip_x -= 3
-
         # Dibujar patitas arriba
         for i in range(2, chip_w, 7):
             canvas.create_rectangle(chip_x+i, (chip_y-5), chip_x+i+5, (chip_y), fill="#C67914")
@@ -601,55 +262,37 @@ class Erick4004SimuApp:
         for i in range(2, chip_h, 7):
             canvas.create_rectangle((chip_x+chip_w)-5, (chip_y+i), (chip_x+chip_w+5)-5, (chip_y+i+5), fill="#C67914")
 
-        canvas.create_rectangle(
-            185-10,
-            14,
-            220,
-            46,
-            fill="#2C2C2C"
-        )
+        # soldadura del puerbo usb-c
+        canvas.create_rectangle(185-10,14,220,46,fill="#2C2C2C")
         # El puerto USB-C
         USBCPush = tk.Canvas(canvas, width=25, height=25, bg="#C7C7C7", highlightthickness=0)
+        # poner el usbc
         USBCPush.place(x=185, y=18)
+        # que carga una imagen usb
         USBCPush.bind("<Button-1>", lambda e: self.load_usb_image())
 
         chip_x = 180
-        canvas.create_rectangle(
-            chip_x,
-            20,
-            chip_x+5,
-            40,
-            fill="#BBBBBB"
-            )
-        canvas.create_rectangle(
-            chip_x+29,
-            20,
-            chip_x+29+5,
-            40,
-            fill="#BBBBBB"
-            )
+
+        # partes del usb
+        canvas.create_rectangle(chip_x,20,chip_x+5,40,fill="#BBBBBB")
+        canvas.create_rectangle(chip_x+29,20,chip_x+29+5,40,fill="#BBBBBB")
+
+        # el boton para encender
         PowerOnButton = tk.Canvas(canvas, width=25, height=25, bg="#C7C7C7", highlightthickness=0)
+        # posicion x
         chip_x = 265
+        # posicion y
         chip_y = 126
+        # enciende la pc
         PowerOnButton.bind("<Button-1>", lambda e: self._pc_on_())
+        # ponerlo en la posicion
         PowerOnButton.place(x=270, y=103)
-        canvas.create_rectangle(
-            chip_x,
-            chip_y-20,
-            chip_x+5,
-            chip_y,
-            fill="#BBBBBB"
-            )
-        canvas.create_rectangle(
-            chip_x+29,
-            chip_y-20,
-            chip_x+29+5,
-            chip_y,
-            fill="#BBBBBB"
-            )
+        # las cosas
+        canvas.create_rectangle(chip_x,chip_y-20,chip_x+5,chip_y,fill="#BBBBBB")
+        canvas.create_rectangle(chip_x+29,chip_y-20,chip_x+29+5,chip_y,fill="#BBBBBB")
         # la bateria
-        
         BateryPush = tk.Canvas(canvas, width=50, height=25, bg="#A9E34C", highlightthickness=0)
+        # ponerlo en la posicion
         BateryPush.place(x=250, y=15)
         
         self.ports = []
@@ -657,27 +300,20 @@ class Erick4004SimuApp:
         # hacer los placeholders
         for i in range(3):
             chip_x = 60 + (i * 50)
-            canvas.create_rectangle(
-                chip_x-7, 67,
-                (chip_x-10)+40, 67+30,
-                fill="#2C2C2C"
-            )
-            canvas.create_rectangle(
-                chip_x-5, 72,
-                (chip_x-5)+5, 72+20,
-                fill="#BBBBBB"
-            )
-            canvas.create_rectangle(
-                (chip_x-5)+29, 72,
-                (chip_x-5)+29+5, 72+20,
-                fill="#BBBBBB"
-            )
-            # capturamos el valor actual de i en una variable local
+            # soldadura
+            canvas.create_rectangle(chip_x-7, 67,(chip_x-10)+40, 67+30,fill="#2C2C2C")
             
-            PortPush = tk.Canvas(canvas, width=25, height=25, bg="#C7C7C7", highlightthickness=0)
-            PortPush.bind("<Button-1>", lambda e, idx=i: self.conect_hardware(1+idx))
-            PortPush.place(x=chip_x, y=70)
+            # partes del placeholder
+            canvas.create_rectangle(chip_x-5, 72,(chip_x-5)+5, 72+20,fill="#BBBBBB")
+            canvas.create_rectangle((chip_x-5)+29, 72,(chip_x-5)+29+5, 72+20,fill="#BBBBBB")
 
+            # el puerto
+            PortPush = tk.Canvas(canvas, width=25, height=25, bg="#C7C7C7", highlightthickness=0)
+            # como un boton
+            PortPush.bind("<Button-1>", lambda e, idx=i: self.conect_hardware(1+idx))
+            # ponerlo en x y y
+            PortPush.place(x=chip_x, y=70)
+            # agregarlo a los puertos
             self.ports.append(PortPush)
 
         # Si cierras la ventana principal → cerrar todo
@@ -692,30 +328,39 @@ class Erick4004SimuApp:
     # cargar un usb
     def load_usb_image(self):
         # abrir diálogo para seleccionar archivo .img
-        file_path = filedialog.askopenfilename(
-            title="Selecciona imagen de arranque",
-            filetypes=[("Imagen de disco", "*.img"), ("Todos los archivos", "*.*")]
-        )
+        file_path = filedialog.askopenfilename(title="Selecciona imagen del pendrive",filetypes=[("Imagen de disco", "*.img"), ("Todos los archivos", "*.*")])
+       # si esta 
         if file_path:
+            # abrirlo
             with open(file_path, "rb") as f:
                 # leer todo el archivo y guardarlo en usb_buffer
                 self.usb_buffer = bytearray(f.read())
-            self.usb_index = 0   # reiniciar índice de lectura
+            # el index del usb
+            self.usb_index = 0 
     # abre el debug
     def abrir_debug(self):
+        # abrir el debug
         DebugWindow(self.root, self.VirtualMachine)
     # desconecta el hardware
     def disconect_hardware(self,index):
+        # desconecta hardware
         i = index - 1
+        # el hardware
         hw = self.hardwares[i]
 
+        # si esta el hardware y no se ha desconectado
         if hw and not (hw.disconnect is None):
+            # desconectarlo
             hw.disconnect(self.ports[i])
+            # el update es none
             hw.update = None
+            # el puerto se vuelve de su color original para simular su extraccion
             self.ports[i].configure(bg="#C7C7C7")
     # ejecutar codigo
     def excode(self):
+        # pedir la linea asm
         code_asm = pedir_texto()
+        # codigo
         code = e4asm.assamble_code(code_asm)
         program = list(code)
         
@@ -861,7 +506,7 @@ class Erick4004SimuApp:
 
         for row in range(rows):
             for col in range(cols):
-                addr = offset + (row*cols + col)*2
+                addr = vga_offset + (row*cols + col)*2
                 char_code = self.VirtualMachine.mem[addr]
                 attr = self.VirtualMachine.mem[addr+1]
 
@@ -889,110 +534,197 @@ class Erick4004SimuApp:
         self.root.destroy()
     # para enviar datos a un dispositivo
     def _io_outpud_(self, port:int, data:int):
-        if (port == 0):
-            return
+        # puerto 0
+        if (port == 0): return
+
+        # resetear lector de usb
         if (port == 0x30):
+            # indice es 0
             self.usb_index = 0
             return
+        
+        # setear el indice de la usb
         if (port == 0x32):
+            # setear
             self.usb_index = data
             return
+        
+        # vaciar el buffer de programa externo a ejecutar
         if (port == 0x40):
+            # arrays
             self.program_buffer = bytearray()
+
+            # indice del programa
             self.program_index = 0
             return
+        
+        # el puerto para mandar un byte al buffer de programa
         if (port == 0x41):
+            # el buffer
             self.program_buffer.append(data)
+            # siguiente entrada
             self.program_index += 1
             return
+        
+        # para ejecutar el codigo del programa
         if port == 0x42:
+            # el pc antiguo
             old_pc = self.VirtualMachine.pc
+            # programa antiguo
             old_program = self.current_program
+            # funcion
             def worker():
+                # buffer actual
                 self.current_program = self.program_buffer
+                # pc=0
                 self.VirtualMachine.pc = 0
+                # ejecutar programa
                 while self.VirtualMachine.pc < len(self.program_buffer) and not self.VirtualMachine.in_halt_mode:
+                    # si manda iret
                     if self.VirtualMachine.exit_program:
+                        # salir
                         self.VirtualMachine.exit_program = False
                         break
+                    # siguiente instruccion
                     self.VirtualMachine.step(self.program_buffer)
+                # restaurar el program buffer
                 self.current_program = old_program
+
+            # arbol a ejecutar
             t = threading.Thread(target=worker)
+            # iniciar
             t.start()
-            t.join()  # aquí sí espera a que termine
+            # esperar a que termine
+            t.join()
+
+            # recuperar el program counter
             self.VirtualMachine.pc = old_pc
             return
+        
+        # obtener el programa actual
         if port == 0x50:
             # El valor escrito al puerto es la dirección base
             base_addr = data
-
+            # el address
             prog = self.current_program
+            # setearlo
             for i, byte in enumerate(prog):
+                # la base
                 if base_addr + i < len(self.VirtualMachine.mem):
+                    # setear memoria
                     self.VirtualMachine.mem[base_addr + i] = byte
+            # setear base
             self.idt_table_base = base_addr
             return
+        
+        # setear el indice de idt a modificar
         if port == 0x51:
+            # setear
             self.current_idt_index = data
             return
+        
+        # modificar offset de idt
         if port == 0x52:
+            # si no esta
             if self.offsets_idt.get(self.current_idt_index) is None:
                 # crearlo
                 self.offsets_idt.__setitem__(self.current_idt_index, data)
             # ajustarlo
             self.offsets_idt[self.current_idt_index] = data 
             return
-        if (port == 0x53): # int internal
+        
+        # funcion interna para llamar interrupciones
+        if (port == 0x53):
+            # el tamaño maximo
             size_max = self.current_idt_size
+            # inicio
             start = self.idt_table_base
+            # fin
             end = (self.idt_table_base)+size_max
+            # la interrupcion
             interruption = self.VirtualMachine.mem[start:end]
 
+            # guardar pc
             old_pc = self.VirtualMachine.pc
+            # funcion
             def worker():
+                # el pc es el offset en los id
                 self.VirtualMachine.pc = self.offsets_idt[data]
+                # ejecutar programa
                 while self.VirtualMachine.pc < len(interruption) and not self.VirtualMachine.in_halt_mode:
+                    # si sale
                     if self.VirtualMachine.exit_program:
+                        # salir
                         self.VirtualMachine.exit_program = False
+                        # cargar antiguo program counter
                         self.VirtualMachine.pc = old_pc
                         break
+                    # siguiente instruccion
                     self.VirtualMachine.step(interruption)
 
+            # el proceso
             t = threading.Thread(target=worker)
+            # iniciar
             t.start()
+            # esperar a que termine
             t.join()
 
+            # pc anterior
             self.VirtualMachine.pc = old_pc
             return
+        
+        # setear el tamaño del idt
         if (port == 0x54):
+            # setearlo
             self.current_idt_size = data
             return
+        
+        # simular energia pasando por los circuitos pbc
         self.pbc(port=port)
+
+        # puerto de vga
         if (port == 4):
-            self.VirtualMachine.mem[offset + self.vidoff] = data
+            # añadir dato
+            self.VirtualMachine.mem[vga_offset + self.vidoff] = data
+            # siguiente casilla
             self.vidoff = self.vidoff + 1
+        # si la funcion de outpud existe
         elif not (self.hardwares[port-1].outpud is None):
+            # mandar
             self.hardwares[port-1].outpud(self.ports[port-1], data)
         else:
-            print("dont call")
+            # no se llamo
+            print("e4sim: cant find the hardware in that place")
     # para recibir datos de un dispositivo
     def _io_input_(self, port:int) -> int:
-        if (port == 0):
-            return 0
-        if port == 0x31:
-            if len(self.usb_buffer) == 0:
-                return 0
-            if self.usb_index >= len(self.usb_buffer):
-                return 0
-            val = self.usb_buffer[self.usb_index]
-            self.usb_index += 1
-            return val
-        if port == 0x55:
-            return self.current_program.__len__()
-        elif (port == 0x20):
-            return key_queue.get()
+        # puerto 0
+        if (port == 0): return 0
 
+        # puerto para recibir una dato de la usb
+        if port == 0x31:
+            # si la imagen tiene longitud 0
+            if len(self.usb_buffer) == 0: return 0
+            # si el index es mayor a la longitud
+            if self.usb_index >= len(self.usb_buffer): return 0
+
+            # obtener el dato de la usb
+            val = self.usb_buffer[self.usb_index]
+            # sumar indice para lectura continua
+            self.usb_index += 1
+
+            # retornar dato
+            return val
+        
+        # puerto para obtener la longitud del programa actual
+        if port == 0x55: return self.current_program.__len__()
+
+        # para leer una tecla
+        elif (port == 0x20): return key_queue.get()
+
+        # hace la animacion como si estuviese cruzando energia por los circuitos
         self.pbc(port=port)
+
+        # retorna el dato
         return self.hardwares[port-1].input(self.ports[port-1])
     # tecla
     def on_key(self, event):
