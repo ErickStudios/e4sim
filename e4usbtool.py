@@ -1,38 +1,7 @@
 # usbtool.py
 import sys
-
-class e4fs:
-    def __init__(self):
-        pass
-
-    @staticmethod
-    def new_partition(executable_bootsector: bytes):
-        # sector de 512 bytes inicializado en cero
-        partition = bytearray(512)
-
-        # --- Header personalizado ---
-        size_hdr = 16  # por ejemplo, 16 bytes de cabecera
-        fs_name = b"e4fs".ljust(8, b' ')     # 8 bytes
-        oem_name = b"ErCrSt".ljust(7, b' ')  # 7 bytes
-
-        # escribir header
-        partition[0] = size_hdr
-        partition[1:1+8] = fs_name
-        partition[9:9+7] = oem_name
-
-        # --- Código ejecutable ---
-        # se copia después del header
-        start_code = size_hdr
-        partition[start_code:start_code+len(executable_bootsector)] = executable_bootsector[:512-size_hdr]
-
-        return partition
-    def newfile(self, path: str, content: bytearray) -> bytearray:
-        file = bytearray()
-        file += len(path).to_bytes(4, "big")
-        file += path.encode("utf-8")
-        file += len(content).to_bytes(4, "big")
-        file += content
-        return file
+# importar fs
+from e4lib.e4fs.fs import e4fs
 
 def create_new_img(usb_img_file, bootsector_executable_file):
     # leer el archivo del boot sector
@@ -54,13 +23,12 @@ def create_new_img(usb_img_file, bootsector_executable_file):
     print(f"Imagen USB creada: {usb_img_file}")
     print(f"Tamaño total: {len(usb_img)} bytes")
 
-def copy_file_to_img(usb_img_file, file_to_copy):
-    fs = e4fs()
+def copy_file_to_img(usb_img_file, file_to_copy, name_in):
     # leer archivo a copiar
     with open(file_to_copy, "rb") as f:
         content = f.read()
     # crear estructura e4fs
-    file_entry = fs.newfile(file_to_copy, bytearray(content))
+    file_entry = e4fs.newfile(name_in, bytearray(content))
     # guardar en .img
     with open(usb_img_file, "ab") as f:
         f.write(file_entry)
@@ -77,7 +45,8 @@ if __name__ == "__main__":
     elif mode == "-cpy":
         usb_img_file = sys.argv[2]
         file_to_copy = sys.argv[3]
-        copy_file_to_img(usb_img_file, file_to_copy)
+        file_name = sys.argv[4]
+        copy_file_to_img(usb_img_file, file_to_copy, file_name)
 
     else:
         print("Uso:")

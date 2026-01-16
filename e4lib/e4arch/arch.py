@@ -1,7 +1,7 @@
 # la maquina virtual
 class e4arch:
     # inicializa
-    def __init__(self, mem_size=65536):
+    def __init__(self, mem_size=4194304):
         # memoria
         self.mem = bytearray(mem_size)
         # registros
@@ -69,11 +69,6 @@ class e4arch:
 
             # Setear DS al inicio de la variable
             self.reg['ds'] = addr
-
-            # Inicializar memoria
-            for i in range(size):
-                if addr + i < len(self.mem):
-                    self.mem[addr + i] = 0
         elif op == 0x03:  # align n (define: reset off)
             n = self.read_byte(program)
             self.reg['off'] = n
@@ -284,6 +279,21 @@ class e4arch:
             self.pc_fetch._io_outpud_(0x53, interruption)
         elif op == 0x21: # exit
             self.exit_program = True
+        elif op == 0x22:  # shl dst,src
+            operand = self.read_byte(program)
+            dst = (operand >> 4) & 0xF
+            src = operand & 0xF
+            # desplazamiento lógico a la izquierda
+            val = self._get_reg(dst) << self._get_reg(src)
+            self._set_reg(dst, val & 0xFFFFFFFF)  # limitar a 32 bits
+
+        elif op == 0x23:  # shr dst,src
+            operand = self.read_byte(program)
+            dst = (operand >> 4) & 0xF
+            src = operand & 0xF
+            # desplazamiento lógico a la derecha
+            val = (self._get_reg(dst) & 0xFFFFFFFF) >> self._get_reg(src)
+            self._set_reg(dst, val)
         else:
             pass
     # obtiene un registro
@@ -300,8 +310,6 @@ class e4arch:
         reg1 = self._get_reg(reg1a)
         # registro 2
         reg2 = self._get_reg(reg2a)
-        # hacer pbc
-        self.pc_fetch._pbc_in_()
         # datos
         data = self.pc_fetch._io_input_(reg1)
         # enviar dato
@@ -312,8 +320,6 @@ class e4arch:
         reg1 = self._get_reg(reg1a)
         # registro 2
         reg2 = self._get_reg(reg2a)
-        # hacer pbc
-        self.pc_fetch._pbc_in_()
         # enviar dato
         self.pc_fetch._io_outpud_(reg1, reg2)
     # setear registro
@@ -321,3 +327,7 @@ class e4arch:
         table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
         name = table.get(code)
         if name: self.reg[name] = value
+#@alias
+e4arch_32 = e4arch
+#@alias
+e4arch_32bit = e4arch

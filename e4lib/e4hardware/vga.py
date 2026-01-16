@@ -1,6 +1,12 @@
 class e4hardware_vga:
     # el segmento donde esta el color del vga
     vga_offset = 0xB82
+    # el segmento alias
+    vga_segment = vga_offset
+    # el address
+    vga_address = vga_offset
+    # el flag de modo grafico
+    vga_flag_gop = vga_segment - 1
     # el color de la consola
     @staticmethod
     def color_console(col: int):

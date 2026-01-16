@@ -1,18 +1,24 @@
-# el hardware
-from e4lib.e4arch.hardware import e4arch_hardware as Hardware
-# la maquina virtual
-from e4lib.e4arch.arch import e4arch as VM
-# la libreria para dibujar pines
-from e4lib.e4hardware.pbc import e4hardware_pins_style as stylepbc
 # la libreria de e4asm
 import e4lib.assambler as e4asm
-# la libreria de los colores
-from e4lib.e4hardware.vga import e4hardware_vga
 # la app de debug
 from e4lib.e4sim_app.memview import e4simapp_memview as DebugWindow
+# el tooltip
+from e4lib.tootltip import ToolTip as e4app_tooltip
 
-# el para guis
-import tkinter as tk
+# el hardware
+from e4lib.e4arch.hardware import e4arch_hardware as Hardware
+# la libreria de los colores
+from e4lib.e4hardware.vga import e4hardware_vga
+# la libreria para dibujar pines
+from e4lib.e4hardware.pbc import e4hardware_pins_style as stylepbc
+
+# el fs
+from e4lib.e4fs.fs import e4fs as filesystem
+# la maquina virtual
+from e4lib.e4arch.arch import e4arch as VM
+
+# para los parametros
+from sys import argv
 # importar el os
 import os
 # importar el stack
@@ -20,10 +26,12 @@ import queue
 # importar los treadigns
 import threading
 
+# el para guis
+import tkinter as tk
 # el dialogo de archivos
-filedialog = tk.filedialog
+from tkinter import filedialog
 # el dialogo de texto
-simpledialog = tk.simpledialog
+from tkinter import simpledialog
 
 # colores de la consola
 color_console = e4hardware_vga.color_console
@@ -77,34 +85,8 @@ class Erick4004SimuApp:
         # el fondo
         self.root.configure(bg="#1E1E1E")
 
-        # barra de menu
-        menubar = tk.Menu(self.root, tearoff=0)
-        # la barra de menu de hardware
-        hardware_menu = tk.Menu(menubar, tearoff=0)
-        # el menu de herramientas
-        tools_menu = tk.Menu(menubar, tearoff=0)
-
-        # remover un hardware
-        remover_hardware = tk.Menu(menubar, tearoff=0)
-        # añadir el menu de remover hardware
-        hardware_menu.add_cascade(label="Remover", menu=remover_hardware)
-        # comando de adaptador de video
-        tools_menu.add_command(label="Adaptador de video",command=self.crear_output)
-        # comando de abrir codigo
-        tools_menu.add_command(label="Abrir codigo",command=self.waitfile)
-        # comando de abrir inspector de memoria
-        tools_menu.add_command(label="Abrir inspector de memoria",command=self.abrir_debug)
-        # menu de remover hardware
-        for i in range(3):
-            # el comando de hardware
-            remover_hardware.add_command(label=str(i+1),command=lambda idx=i: self.disconect_hardware(1+idx))
-        # añadir el menu de hardware
-        menubar.add_cascade(label="Hardware", menu=hardware_menu)
-        # añadir el menu de tools
-        menubar.add_cascade(label="Tools", menu=tools_menu)
-
-        # configurar la barra de menu
-        self.root.config(menu=menubar)
+        # el menu
+        self.menu_init(self.root)
 
         # el label 0
         label0 = tk.Label(self.root, text="\n", background="#1E1E1E", foreground="white")
@@ -315,6 +297,7 @@ class Erick4004SimuApp:
             PortPush.place(x=chip_x, y=70)
             # agregarlo a los puertos
             self.ports.append(PortPush)
+            e4app_tooltip(PortPush, "port_slot" + str(i) + " : click para cargar un dispositivo")
 
         # Si cierras la ventana principal → cerrar todo
         self.root.protocol("WM_DELETE_WINDOW", self.cerrar_todo)
@@ -324,7 +307,61 @@ class Erick4004SimuApp:
 
         self.root.bind("<Key>", self.on_key)
 
+        e4app_tooltip(CPUBox, "main chip (click para ejecutar comando)")
+        e4app_tooltip(BateryPush, "bateria")
+        e4app_tooltip(USBCPush, "puerto usb (click para seleccionar una imagen de usb)")
+        e4app_tooltip(PowerOnButton, "boton de encendido (click para encender el dispositivo)")
+
         self.update_devices_loop()
+    # inicializar menu
+    def menu_init(self, rt, donly=False):
+        # barra de menu
+        menubar = tk.Menu(rt, tearoff=0)
+        # la barra de menu de hardware
+        hardware_menu = tk.Menu(menubar, tearoff=0)
+        # el menu de herramientas
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        # el menu de poder
+        machine_menu = tk.Menu(menubar, tearoff=0)
+
+        # remover un hardware
+        remover_hardware = tk.Menu(menubar, tearoff=0)
+        # añadir el menu de remover hardware
+        hardware_menu.add_cascade(label="Remover", menu=remover_hardware)
+        # comando de adaptador de video
+        tools_menu.add_command(label="Adaptador de video",command=self.crear_output)
+        # comando de abrir codigo
+        tools_menu.add_command(label="Abrir codigo",command=self.waitfile)
+        # comando de abrir inspector de memoria
+        tools_menu.add_command(label="Abrir inspector de memoria",command=self.abrir_debug)
+        # para la maquina
+        machine_menu.add_command(label="Reiniciar", command=self._pc_reset_)
+        # para apagar
+        machine_menu.add_command(label="Apagar", command=self.cerrar_todo)
+        # menu de remover hardware
+        for i in range(3):
+            # el comando de hardware
+            remover_hardware.add_command(label=str(i+1),command=lambda idx=i: self.disconect_hardware(1+idx))
+        # si hay display only
+        if donly == True:
+            # añadir
+            add_hardware = tk.Menu(menubar, tearoff=0)
+            # menu de añadir hardware
+            for i in range(3):
+                # el comando de hardware
+                add_hardware.add_command(label=str(i+1),command=lambda idx=i: self.conect_hardware(1+idx))
+            # añadir
+            hardware_menu.add_cascade(label="Añadir", menu=add_hardware)    
+
+        # añadir el menu de maquina
+        menubar.add_cascade(label="Maquina", menu=machine_menu)
+        # añadir el menu de hardware
+        menubar.add_cascade(label="Hardware", menu=hardware_menu)
+        # añadir el menu de tools
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        # configurar la barra de menu
+        rt.config(menu=menubar)
     # cargar un usb
     def load_usb_image(self):
         # abrir diálogo para seleccionar archivo .img
@@ -408,6 +445,16 @@ class Erick4004SimuApp:
             if step < len(rail):
                 self.canvas.itemconfig(rail[step], fill=self.original_pbc_color)
                 self.canvas.after(10, lambda: self._pbc_in_(step+1, True, rail))
+    # only display
+    def only_display(self):
+        # si no se dibuja
+        self.root.withdraw()
+        # abrir display
+        self.crear_output()
+        # al cerrarlo, cerrar todo
+        self.output_win.protocol("WM_DELETE_WINDOW", self.cerrar_todo)
+        # abrir menu
+        self.menu_init(self.output_win, True)
     # enciende la pc
     def _pc_on_(self):
         self.pbc(5)
@@ -415,9 +462,11 @@ class Erick4004SimuApp:
 
         cwd = os.getcwd()
         firmware_code = open(os.path.join(cwd, "e4lib", "firmware", "main.asm"), "r").read()
-        code = list(e4asm.assamble_code(firmware_code))
+        code_fd = e4asm.assamble_code(firmware_code)
+        code = list(code_fd)
+        open(os.path.join(cwd, "e4lib", "e4bins", "firmware.o"), "wb").write(code_fd)
         self.VirtualMachine.pc = 0
-        self.step(code)
+        self.start(code)
     # para esperar a ejecutar un archivo
     def waitfile(self):
         fl = filedialog.askopenfilename(
@@ -428,7 +477,15 @@ class Erick4004SimuApp:
         program = list(open(fl,"rb").read())
 
         self.VirtualMachine.pc = 0
+        self.start(program)
+    # inicio
+    def start(self, program):
+        self.running = True
+        self.pcstop = 0
         self.step(program)
+    # fin
+    def stop(self):
+        self.running = False
     # paso del programa
     def step(self, program):
         if self.VirtualMachine.pc < len(program): 
@@ -449,13 +506,35 @@ class Erick4004SimuApp:
                         # despertar
                         self.VirtualMachine.in_halt_mode = False
                 self.VirtualMachine.step(program)
-            self.canvas.after(1, lambda: self.step(program))
+            # si detener
+            if self.running:
+                # detener
+                self.canvas.after(1, lambda: self.step(program))
+            self.pcstop = 1
+    # para reiniciar
+    def _pc_reset_(self):
+        # detener ejecución
+        self.stop()
+
+        # limpiar framebuffer de texto (80x25 caracteres, 2 bytes cada uno)
+        start = e4hardware_vga.vga_offset
+        end   = start + (80 * 25 * 2)
+
+        # opción 1: bucle
+        for i in range(start, end):
+            self.VirtualMachine.mem[i] = 0
+
+        # opción 2: asignación por slice
+        self.VirtualMachine.mem[start:end] = [0] * (end - start)
+
+        # reiniciar después de un pequeño delay
+        self.root.after(10, self._pc_on_)
     # crea la ventana de outpud
     def crear_output(self):
         if self.output_win is None or not tk.Toplevel.winfo_exists(self.output_win):
             self.output_win = tk.Toplevel(self.root)
-            self.output_win.title("Memoria de video 0xB82")
-            self.output_win.geometry("640x480")
+            self.output_win.title("e4sim - display outpud")
+            self.output_win.geometry("" + str(8*80) + "x" + str(16*25))
 
             self.vidmem = tk.Canvas(self.output_win, width=640, height=480, bg="black")
             self.vidmem.pack()
@@ -504,25 +583,48 @@ class Erick4004SimuApp:
         cols, rows = 80, 25
         cell_w, cell_h = 8, 16
 
+        gop_mode = False
+
+        # modo grafico
+        if self.VirtualMachine.mem[vga_offset-1] == 1:
+            # activar
+            gop_mode = True
+            # r/c
+            cols = cols * cell_w
+            rows = rows * cell_h
+            # celdas
+            cell_h = 1
+            cell_h = 1
         for row in range(rows):
             for col in range(cols):
-                addr = vga_offset + (row*cols + col)*2
-                char_code = self.VirtualMachine.mem[addr]
-                attr = self.VirtualMachine.mem[addr+1]
+                addr = vga_offset + (row*cols + col)
+                pixel_val = self.VirtualMachine.mem[addr]
 
-                fg = "white"
-                if attr == 0x07:
-                    fg = "lightgreen"
+                if gop_mode:
+                    # modo gráfico: cada byte = color
+                    color = color_console(pixel_val & 0x0F)
+                    self.vidmem.create_rectangle(
+                        col, row, col+1, row+1,
+                        outline=color, fill=color
+                    )
+                else:
+                    addr = vga_offset + (row*cols + col)*2
+                    char_code = self.VirtualMachine.mem[addr]
+                    attr = self.VirtualMachine.mem[addr+1]
 
-                #fg = color_console(attr & 0x0F)          # color de texto
-                bg = color_console((attr >> 4) & 0x0F)   # color de fondo
+                    fg = "white"
+                    if attr == 0x07:
+                        fg = "lightgreen"
 
-                self.vidmem.create_text(
-                    col*cell_w + 4, row*cell_h + 8,
-                    text=chr(char_code),
-                    fill=fg,
-                    font=("Consolas", 10)
-                )
+                    #fg = color_console(attr & 0x0F)          # color de texto
+                    bg = color_console((attr >> 4) & 0x0F)   # color de fondo
+
+                    self.vidmem.create_text(
+                        col*cell_w + 4, row*cell_h + 8,
+                        text=chr(char_code),
+                        fill=fg,
+                        font=("Consolas", 10)
+                    )
 
         # Volver a llamar después de 100 ms
         self.vidmem.after(100, self.actualizar_video)
@@ -535,7 +637,8 @@ class Erick4004SimuApp:
     # para enviar datos a un dispositivo
     def _io_outpud_(self, port:int, data:int):
         # puerto 0
-        if (port == 0): return
+        if (port == 0): 
+            return
 
         # resetear lector de usb
         if (port == 0x30):
@@ -580,6 +683,9 @@ class Erick4004SimuApp:
                 self.VirtualMachine.pc = 0
                 # ejecutar programa
                 while self.VirtualMachine.pc < len(self.program_buffer) and not self.VirtualMachine.in_halt_mode:
+                    # si no se ejecuta
+                    if self.running == False:
+                        break
                     # si manda iret
                     if self.VirtualMachine.exit_program:
                         # salir
@@ -652,6 +758,9 @@ class Erick4004SimuApp:
                 self.VirtualMachine.pc = self.offsets_idt[data]
                 # ejecutar programa
                 while self.VirtualMachine.pc < len(interruption) and not self.VirtualMachine.in_halt_mode:
+                    # si no se ejecuta
+                    if self.running == False:
+                        return
                     # si sale
                     if self.VirtualMachine.exit_program:
                         # salir
@@ -732,7 +841,56 @@ class Erick4004SimuApp:
         key_queue.put(event.char)
         self.keyboard_comming = True
 
-# Ejecutar la app
-app = Erick4004SimuApp()
+def main():
+    # Ejecutar la app
+    app = Erick4004SimuApp()
 
-app.root.mainloop()
+    # parametros
+    parameters = argv[1:]
+
+    initialize_auto = False
+    param_index = 0
+    while param_index < len(parameters):
+        # parametro
+        param = parameters[param_index]
+        # insertar usb manualmente
+        if param == "-usb":
+            # tiene que ser un .img
+            usb_path = parameters[param_index + 1]
+            # abrir
+            app.usb_buffer = open(usb_path, "rb").read()
+            # aumentar
+            param_index += 1
+            # avisar
+            print("image '" + usb_path + "' loaded as the usb virtual usb pendrive")
+        # si es autopower
+        elif param == "-autopower":
+            # encenderlo
+            initialize_auto = True
+        # kernel para el sistema
+        elif param == "-kernel":
+            # el archivo
+            kernel_file = parameters[param_index + 1]
+            # el filesystem
+            fs = filesystem.new_partition(open(kernel_file, "rb").read())
+            # ponerlo
+            app.usb_buffer = fs
+            # sumar
+            param_index += 1
+        # solo display
+        elif param == "-onlydisplay":
+            # solo display
+            app.only_display()
+        param_index += 1
+
+    # si se inicializa
+    if initialize_auto:
+        def auto_power_on():
+            # presionar el botón de encendido automáticamente
+            app._pc_on_()
+        # lanzar en otro hilo
+        threading.Thread(target=auto_power_on, daemon=True).start()
+
+    app.root.mainloop()
+
+main()

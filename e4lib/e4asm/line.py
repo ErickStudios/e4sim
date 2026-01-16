@@ -26,6 +26,14 @@ def assemble_in(dst, src):
     opcode = 0x0D
     operand = (registers[dst] << 4) | registers[src]
     return [opcode, operand]
+def assemble_shr(dst, src):
+    opcode = 0x23
+    operand = (registers[dst] << 4) | registers[src]
+    return [opcode, operand]
+def assemble_shl(dst, src):
+    opcode = 0x22
+    operand = (registers[dst] << 4) | registers[src]
+    return [opcode, operand]
 # out
 def assemble_out(dst, src):
     opcode = 0x0E
@@ -204,6 +212,14 @@ def assemble_line(line, context:AssemblerContext, len:int):
     elif instr == "out":
         dst, src = parts[1].split(",")
         return assemble_out(dst, src)
+    
+    elif instr == "shr":
+        dst, src = parts[1].split(",")
+        return assemble_shr(dst, src)
+    
+    elif instr == "shl":
+        dst, src = parts[1].split(",")
+        return assemble_shl(dst, src)
 
     elif instr == "ivar":
         name, rest = parts[1].split(",")
@@ -480,6 +496,8 @@ def instr_length(line, context):
     elif instr == "in":
         return 2
     elif instr == "out":
+        return 2
+    elif instr == "shr" or instr == "shl":
         return 2
     elif instr == "add":
         return 2

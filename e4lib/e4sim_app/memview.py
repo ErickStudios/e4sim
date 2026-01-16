@@ -9,7 +9,7 @@ class e4simapp_memview(tk.Toplevel):
         # la maquina virtual
         self.vm = vm
         # el titulo
-        self.title("e4sim - memoria inspector")
+        self.title("e4sim - memory inspector")
         # fondo
         self.configure(bg="#1E1E1E")
         # widget para mostrar la memoria
@@ -26,6 +26,7 @@ class e4simapp_memview(tk.Toplevel):
         self.text.delete("1.0", tk.END)
         # iterar la memoria
         for i in range(0, len(self.vm.mem), 16):
+            self.update()
             # el bloque
             bloque = self.vm.mem[i:i+16]
             # hexadecimales

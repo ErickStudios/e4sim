@@ -129,10 +129,6 @@ label firmware_start
     ; funciones de llamado
     call memory_idt_load    ; cargar el idt
 
-    align 0
-    mov a,off
-    int a
-
     ; funciones de rutina
     call boot_sector_read   ; leer el sector
 
@@ -197,8 +193,6 @@ label load_code
     gub a                   ; obtenerlo
     mov off,a               ; añadir al offset
     sub cycl,a              ; menos ciclos
-    dbg off
-    dbg ds
 
     call load_code_loop     ; llamar al loop
 
@@ -241,10 +235,13 @@ label int_disk
     ; guardar
     push ds                 ; guardar ds
     push off                ; guardar off
-    push b                  ; guardar b
+    push a                  ; guardar b
+
+    align 0x32              ; el offset
+    out off,a               ; setear
 
     ; cargar
-    pop b                   ; cargar b
+    pop a                   ; cargar b
     pop off                 ; cargar off
     pop ds                  ; cargar ds
     iret
@@ -284,8 +281,8 @@ label memory_idt_load
     align 0                 ; off->0
     gub b                   ; cargar en b
     out a,b                 ; resetear el contador
-    
-    ; int de prueba
+
+    ; int de disco
     call inc_and_add_idt    ; setear address
     call _getports_         ; obtener puertos
     align 9                 ; puerto id 9
@@ -294,7 +291,7 @@ label memory_idt_load
     pul int_disk            ; cargar la direccion de la funcion dentro del codigo
     align 0                 ; off->0
     gul b                   ; el offset
-    out a,b                 ; 
+    out a,b                 ; setear int
     ret
 ; para añadir e incrementar las interrupciones
 label inc_and_add_idt
