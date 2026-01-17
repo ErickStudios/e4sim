@@ -12,6 +12,3 @@ pub 'h',0,'e',0,'l',0,'l',0,'o',0     ; hello
 pub 32,0,'w',0,'o',0,'r',0,'l',0,'d',0  ; world
 
 pub 0
-
-cli
-hlt

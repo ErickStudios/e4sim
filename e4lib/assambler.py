@@ -52,7 +52,6 @@ class e4asm:
             pc += len(instr_bytes)
 
         # donde termina
-        print("memory ends at: ", context.ds_pointer)
         return bytes(program)
 
 # alias para versiones antiguas

@@ -9,6 +9,8 @@ from e4lib.tootltip import ToolTip as e4app_tooltip
 from e4lib.e4arch.hardware import e4arch_hardware as Hardware
 # la libreria de los colores
 from e4lib.e4hardware.vga import e4hardware_vga
+# la tarjeta de lan
+from e4lib.e4hardware.eic3045 import e4hardware_eic3045
 # la libreria para dibujar pines
 from e4lib.e4hardware.pbc import e4hardware_pins_style as stylepbc
 
@@ -66,6 +68,8 @@ class Erick4004SimuApp:
         self.program_index = 0
         # el buffer de programa
         self.program_buffer = bytearray()
+        # archivo de firmware
+        self.fd_file = os.path.join(os.getcwd(), "e4lib", "firmware", "main.asm")
 
         # la direccion base de la tabla idt, solo es el binario
         self.idt_table_base = 0
@@ -75,6 +79,9 @@ class Erick4004SimuApp:
         self.current_idt_index = 0
         # el tamaño del programa
         self.current_idt_size = 0
+
+        # tarjeta de red
+        self.net = e4hardware_eic3045()
 
         # Ventana principal
         self.root = tk.Tk()
@@ -312,7 +319,26 @@ class Erick4004SimuApp:
         e4app_tooltip(USBCPush, "puerto usb (click para seleccionar una imagen de usb)")
         e4app_tooltip(PowerOnButton, "boton de encendido (click para encender el dispositivo)")
 
+
+        threading.Thread(target=self.prompt_loop, daemon=True).start()
         self.update_devices_loop()
+    # el loop
+    def prompt_loop(self):
+        while True:
+            # codigo
+            code_asm = input("> ")
+
+            if (code_asm != ""):
+                # codigo
+                code = e4asm.assamble_code(code_asm)
+                program = list(code)
+                print(program)
+                
+                old_pc = self.VirtualMachine.pc
+                self.VirtualMachine.pc = 0
+                while self.VirtualMachine.pc < len(program):
+                    self.VirtualMachine.step(program)
+                self.VirtualMachine.pc = old_pc
     # inicializar menu
     def menu_init(self, rt, donly=False):
         # barra de menu
@@ -401,9 +427,11 @@ class Erick4004SimuApp:
         code = e4asm.assamble_code(code_asm)
         program = list(code)
         
+        old_pc = self.VirtualMachine.pc
         self.VirtualMachine.pc = 0
         while self.VirtualMachine.pc < len(program):
             self.VirtualMachine.step(program)
+        self.VirtualMachine.pc = old_pc
     # hacer animacion pbc
     def pbc(self, port=None):
         if (port == 4):
@@ -461,7 +489,7 @@ class Erick4004SimuApp:
         self.pbc(6)
 
         cwd = os.getcwd()
-        firmware_code = open(os.path.join(cwd, "e4lib", "firmware", "main.asm"), "r").read()
+        firmware_code = open(self.fd_file, "r").read()
         code_fd = e4asm.assamble_code(firmware_code)
         code = list(code_fd)
         open(os.path.join(cwd, "e4lib", "e4bins", "firmware.o"), "wb").write(code_fd)
@@ -536,7 +564,7 @@ class Erick4004SimuApp:
             self.output_win.title("e4sim - display outpud")
             self.output_win.geometry("" + str(8*80) + "x" + str(16*25))
 
-            self.vidmem = tk.Canvas(self.output_win, width=640, height=480, bg="black")
+            self.vidmem = tk.Canvas(self.output_win, width=(8*80), height=(16*25), bg="black")
             self.vidmem.pack()
 
             # Llamar al refresco periódico
@@ -656,7 +684,6 @@ class Erick4004SimuApp:
         if (port == 0x40):
             # arrays
             self.program_buffer = bytearray()
-
             # indice del programa
             self.program_index = 0
             return
@@ -677,12 +704,14 @@ class Erick4004SimuApp:
             old_program = self.current_program
             # funcion
             def worker():
+                # copiar
+                program = self.program_buffer[:]
                 # buffer actual
                 self.current_program = self.program_buffer
                 # pc=0
                 self.VirtualMachine.pc = 0
                 # ejecutar programa
-                while self.VirtualMachine.pc < len(self.program_buffer) and not self.VirtualMachine.in_halt_mode:
+                while self.VirtualMachine.pc < len(program) and not self.VirtualMachine.in_halt_mode:
                     # si no se ejecuta
                     if self.running == False:
                         break
@@ -692,7 +721,7 @@ class Erick4004SimuApp:
                         self.VirtualMachine.exit_program = False
                         break
                     # siguiente instruccion
-                    self.VirtualMachine.step(self.program_buffer)
+                    self.VirtualMachine.step(program)
                 # restaurar el program buffer
                 self.current_program = old_program
 
@@ -788,6 +817,11 @@ class Erick4004SimuApp:
             self.current_idt_size = data
             return
         
+        # red
+        if (port == 0x60):
+            self.net.lan_send(data)
+            return
+
         # simular energia pasando por los circuitos pbc
         self.pbc(port=port)
 
@@ -824,11 +858,18 @@ class Erick4004SimuApp:
             # retornar dato
             return val
         
+        # puerto para obtener el usb index
+        if port == 0x32:
+            return self.usb_index
+
         # puerto para obtener la longitud del programa actual
         if port == 0x55: return self.current_program.__len__()
 
         # para leer una tecla
         elif (port == 0x20): return key_queue.get()
+
+        # leer
+        elif (port == 0x60): return self.net.lan_recive()
 
         # hace la animacion como si estuviese cruzando energia por los circuitos
         self.pbc(port=port)
@@ -863,6 +904,9 @@ def main():
             param_index += 1
             # avisar
             print("image '" + usb_path + "' loaded as the usb virtual usb pendrive")
+        # si es baremetal
+        elif param == "-baremetal":
+            app.fd_file = os.path.join(os.getcwd(), "e4lib", "firmware", "baremetal.asm")
         # si es autopower
         elif param == "-autopower":
             # encenderlo

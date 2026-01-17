@@ -49,5 +49,11 @@ class e4asm_context:
         if syntax in registers:
             return registers[syntax]
         
+        if syntax == "e4asm.mapend":
+            # importar el regiones
+            from e4lib.e4arch.memmap import memmap
+            mapend = max(region.end for region in memmap.values())
+            return mapend
+
         if syntax == "":
             return "0"

@@ -26,7 +26,7 @@ db VgaCurrentRow,4
 db VgaCurrentCol,4
 
 ; donde termina la pantalla
-org 0x1B22
+org e4asm.mapend
 
 db MySelf,24320
 
