@@ -318,8 +318,8 @@ class Erick4004SimuApp:
         e4app_tooltip(BateryPush, "bateria")
         e4app_tooltip(USBCPush, "puerto usb (click para seleccionar una imagen de usb)")
         e4app_tooltip(PowerOnButton, "boton de encendido (click para encender el dispositivo)")
-
-
+    # para el prompt
+    def open_prompt(self):
         threading.Thread(target=self.prompt_loop, daemon=True).start()
         self.update_devices_loop()
     # el loop
@@ -517,7 +517,7 @@ class Erick4004SimuApp:
     # paso del programa
     def step(self, program):
         if self.VirtualMachine.pc < len(program): 
-            for _ in range(100):  # ejecuta 100 instrucciones por ciclo
+            for _ in range(2000):  # ejecuta 2000 instrucciones por ciclo
                 self.current_program = program
                 if self.VirtualMachine.pc >= len(program):
                     break
@@ -640,15 +640,11 @@ class Erick4004SimuApp:
                     char_code = self.VirtualMachine.mem[addr]
                     attr = self.VirtualMachine.mem[addr+1]
 
-                    fg = "white"
-                    if attr == 0x07:
-                        fg = "lightgreen"
-
-                    #fg = color_console(attr & 0x0F)          # color de texto
+                    fg = color_console(attr & 0x0F)          # color de texto
                     bg = color_console((attr >> 4) & 0x0F)   # color de fondo
 
                     self.vidmem.create_text(
-                        col*cell_w + 4, row*cell_h + 8,
+                        (col-24)*cell_w + 4, row*cell_h + 8,
                         text=chr(char_code),
                         fill=fg,
                         font=("Consolas", 10)
@@ -904,13 +900,18 @@ def main():
             param_index += 1
             # avisar
             print("image '" + usb_path + "' loaded as the usb virtual usb pendrive")
+        # especificacion
+        elif param == "-specifications" or param == "-spec" or param == "-info":
+            print("CPU freq: 2 MHz")
+            print("BitNumber: 32 bit")
+            print("arch: e4arch 32-bit (e4arch_32)")
+            print("devices: 3 ports")
+            print("USB: pendrive/charger")
+            exit(0)
         # si es baremetal
-        elif param == "-baremetal":
-            app.fd_file = os.path.join(os.getcwd(), "e4lib", "firmware", "baremetal.asm")
+        elif param == "-baremetal": app.fd_file = os.path.join(os.getcwd(), "e4lib", "firmware", "baremetal.asm")
         # si es autopower
-        elif param == "-autopower":
-            # encenderlo
-            initialize_auto = True
+        elif param == "-autopower": initialize_auto = True
         # kernel para el sistema
         elif param == "-kernel":
             # el archivo
@@ -922,9 +923,7 @@ def main():
             # sumar
             param_index += 1
         # solo display
-        elif param == "-onlydisplay":
-            # solo display
-            app.only_display()
+        elif param == "-onlydisplay": app.only_display()
         param_index += 1
 
     # si se inicializa
@@ -935,6 +934,7 @@ def main():
         # lanzar en otro hilo
         threading.Thread(target=auto_power_on, daemon=True).start()
 
+    app.open_prompt()
     app.root.mainloop()
 
 main()

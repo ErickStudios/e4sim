@@ -42,3 +42,4 @@ class e4hardware_vga:
         elif (col == 14): return "#ffff00"
         # blanco
         elif (col == 15): return "#ffffff"
+        

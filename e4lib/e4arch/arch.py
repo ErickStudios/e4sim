@@ -156,7 +156,7 @@ class e4arch:
             src = operand & 0xF
 
             self._io_out_(dst, src)
-            
+
         elif op == 0x0F:  # gub reg
             register = self.read_byte(program)
             self._set_reg(register, self.mem[self.reg["ds"] + self.reg["off"]])
@@ -323,7 +323,6 @@ class e4arch:
         reg2 = self._get_reg(reg2a)
         # enviar dato
         self.pc_fetch._io_outpud_(reg1, reg2)
-
     # setear registro
     def _set_reg(self, code, value):
         table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}
