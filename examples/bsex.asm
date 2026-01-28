@@ -15,6 +15,26 @@ db FileContent,4096
 
 call kmain
 
+; activa el modo protegido
+label protect_mode_activate
+    ; pasos
+    push cycl                           ; guardar cycl
+    mov ds,ds                           ; confirmar ds
+    push a                              ; guardar a para no perder su valor
+    gub a                               ; obtener el byte al que apunta (ds+off)
+    dec off                             ; ir al byte anterior para ponerlo
+    mov [byte]a                         ; no cambia nada por que setea el mismo valor
+    inc cycl                            ; incrementar cycl para que se pueda hacerse el jmp
+    loop protected_mode_entry           ; entrar a modo protegido
+
+; entrada
+label protected_mode_entry
+    ; recuperar para obtener el ret
+    pop a                               ; los recupera
+    pop cycl                            ; los recupera
+
+    ret
+
 ; carga un byte desde la usb
 label load_byte
     ; cargar byte
@@ -48,6 +68,7 @@ label load_dword
 
     ret
 
+; principal
 label kmain
     ; cargar sector
     align 0                             ; el alinear a 0
@@ -67,12 +88,13 @@ label kmain
     cli                                 ; desactivar
     hlt                                 ; haltear
     hlt                                 ; haltear
+    call end
 
 label read_file
     ; leer
+    call reset_program_buffer           ; resetear buffer de programa
     call skip_name                      ; salta el nombre
     call read_content                   ; leer contenido
-    call reset_program_buffer           ; resetear buffer de programa
     call loop_read                      ; loopear
     ret
 
@@ -127,6 +149,10 @@ label loop_read
 
     ; fin
     loop loop_read                      ; loopear
-    align 0x42                          ; puerto
+    call protect_mode_activate          ; activar modo protegido
+    align 66                            ; puerto
     out off,a                           ; alinear
-    ret
+
+    call end
+
+label end

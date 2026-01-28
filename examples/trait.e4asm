@@ -1,0 +1,26 @@
+; el trait
+trait Hello {
+    ; necesita la variable Dependence1
+    needs Dependence1
+    ; necesita la variable Dependence2
+    needs Dependence2
+}
+
+; ejemplo correcto
+stru Stru1 {
+    ; debe implementar el trait hello
+    imps trait Hello
+
+    ; variables
+    .Dependence1 db 3
+    .Dependence2 db 3
+}
+
+; ejemplo incorrecto
+stru Stru2 {
+    ; debe implementar el trait hello
+    imps trait Hello
+
+    ; variables
+    .Dependence1 db 3
+}

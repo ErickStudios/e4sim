@@ -1,2 +1,0 @@
-; continuacion de bsex.asm
-

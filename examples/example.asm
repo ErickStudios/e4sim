@@ -8,7 +8,7 @@
 ivar 0xB82,4                ; settear ds a la direccion
 align 0                     ; settear off a 0
 
-pub 'h',0,'e',0,'l',0,'l',0,'o',0     ; hello
-pub 32,0,'w',0,'o',0,'r',0,'l',0,'d',0  ; world
+pub 'h',0xf,'e',0xf,'l',0xf,'l',0xf,'o',0xf         ; hello
+pub 32,0xf,'w',0xf,'o',0xf,'r',0xf,'l',0xf,'d',0xf  ; world
 
 pub 0

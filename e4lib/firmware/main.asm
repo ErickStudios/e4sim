@@ -7,6 +7,20 @@
 ; cuando ya no queda mas codigo hace un stub que lee las teclas
 ;
 
+; sector de arranque
+stru BootSector {
+    ; tamaño de header
+    .hdrSize db 1
+
+    ; nombre del fs
+    .fsName db 8
+    ; nombre del vendor
+    .vendorName db 7
+
+    ; donde inician los datos
+    .datas db 496
+}
+
 ; el codigo oem del firmware que es el codigo de el nombre del distribuidor
 ; del firmware
 db FD_OEM,17
@@ -17,18 +31,25 @@ db CurrentUint32,4
 ; el lector usb y el teclado para cuando no queda mas codigo para ejecutar,
 ; para guardar el codigo del firmware en memoria
 db ImportantPorts,10
+
 ; el buffer del sector de arranque donde contiene los primeros 512 bytes
 ; del .img que hemos elegido para conectarlo a la usb virtual
-db BufferBootSector,512
+imp BootSector at BufferBootSector
+
 ; la linea actual de la pantalla en modo texto para que la linea se guarde
 db VgaCurrentRow,4
 ; la colummna actual de la pantalla en modo texto para que la linea se guarde
 db VgaCurrentCol,4
+; el actual caracter en prompt
+db PromptCurrChar,4
 
 ; donde termina la pantalla
 org e4asm.mapend
 
 db MySelf,24320
+
+ivar BufferBootSector,0
+dbg ds
 
 ; llamar el inicio del firmware
 call firmware_start

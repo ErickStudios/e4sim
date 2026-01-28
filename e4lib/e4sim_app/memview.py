@@ -13,7 +13,7 @@ class e4simapp_memview(tk.Toplevel):
         # fondo
         self.configure(bg="#1E1E1E")
         # widget para mostrar la memoria
-        self.text = tk.Text(self, width=80, height=25, bg="#1E1E1E", fg="#ffffff")
+        self.text = tk.Text(self, width=80, height=25, bg="#0E0E0E", fg="#ffffff")
         # el texto
         self.text.pack(fill="both", expand=True)
         # refrescar cada cierto tiempo

@@ -1,0 +1,17 @@
+
+
+; importar librerias
+import <- buffer
+import <- bindings
+
+org 6004
+db ArrayBuf,4
+
+org 0
+
+; crear buffer
+new ReadableBufferDynamic MyBuffer
+
+ivar MyBuffer.Content,0
+align 0
+pul ArrayBuf

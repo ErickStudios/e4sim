@@ -1,0 +1,12 @@
+@RegexDef kernel_printchar\s+(.*)
+@impl_begins
+    ; inicio
+    mov a,@param1
+    call putchar
+@impl_ends
+@RegexDef init_variable_u32\s+(\w+)
+@impl_begins
+    align 0
+    ivar @param1,0
+    pul 0
+@impl_ends

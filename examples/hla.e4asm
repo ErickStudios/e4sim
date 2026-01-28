@@ -1,0 +1,4 @@
+; importar
+import <- hla                               ; high level assembly
+
+pushd

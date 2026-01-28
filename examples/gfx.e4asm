@@ -1,0 +1,28 @@
+ivar 0xB81,0
+align 0
+pub 1
+ivar 0xB82,0
+align 0
+
+mov cycl,6
+
+label loope
+
+    push a
+    push cycl
+    mov a,0
+    mov cycl,254
+    call loopa
+    pop cycl
+    pop a
+
+    loop loope
+
+    cli
+    hlt
+
+label loopa
+    mov [byte]a
+    inc a
+    loop loopa
+    ret

@@ -1,0 +1,79 @@
+
+; x()
+; sintaxis:
+;   [f]()
+; funcion:
+;   llama a una funcion
+@RegexDef (\w+)\(\)
+@impl_begins
+    call @param1
+@impl_ends
+
+; pushd
+; sintaxis:
+;   pushd
+; funcion:
+;   sirve para guardar todos los registros generales (que no tienen uso especifico)
+;   en la pila
+@RegexDef pushd
+@impl_begins
+    ; guardar
+    push a                                          ; a
+    push b                                          ; b
+    push c                                          ; c
+    push d                                          ; d
+    push e                                          ; e
+    push f                                          ; f
+@impl_ends
+
+
+; popd
+; sintaxis:
+;   popd
+; funcion:
+;   sirve para cargar todos los registros generales (que no tienen uso especifico)
+;   desde la pila
+@RegexDef popd
+@impl_begins
+    ; cargar
+    pop f                                           ; f
+    pop e                                           ; e
+    pop d                                           ; d
+    pop c                                           ; c
+    pop b                                           ; b
+    pop a                                           ; a
+@impl_ends
+
+; while
+; sintaxis:
+;   while [funcion]
+; funcion:
+;   repite un loop infinitamente
+@RegexDef while\s+(\w+)
+@impl_begins
+    ; loop
+    inc cycl                                        ; incrementar para que nunca baje
+    loop @param1                                    ; llamar al loop
+    ret                                             ; si se acaba externamente
+@impl_ends
+
+; tipos de cosas
+@RegexDef (\w+)\s*=\s*@u8
+@impl_begins
+ @param1 = @size(1)
+@impl_ends
+
+@RegexDef (\w+)\s*=\s*@u16
+@impl_begins
+ @param1 = @size(2)
+@impl_ends
+
+@RegexDef (\w+)\s*=\s*@u32
+@impl_begins
+ @param1 = @size(4)
+@impl_ends
+
+@RegexDef (\w+)\[(\d+)\]\s*=\s*@bytes
+@impl_begins
+ @param1 = @size(@param2)
+@impl_ends

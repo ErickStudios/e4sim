@@ -1,0 +1,11 @@
+; modulo de bindings
+
+@RegexDef new\s+(\w+)\s+(\w+)
+@impl_begins
+    ; estructura
+    imps @param1 at @param2
+    push ds                                 ; guardar ds
+    ivar @param2,0                          ; poner la direccion a la estructura en ds (self)
+    call _@param1_new                       ; llamar al constructor
+    pop ds                                  ; recuperar
+@impl_ends

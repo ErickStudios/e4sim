@@ -1,9 +1,18 @@
+# el regex
+import re
 # registros
 from e4lib.e4asm.registers import e4asm_registers as registers
 # contexto
 from e4lib.e4asm.context import e4asm_context as AssemblerContext
+# mergueo
+from e4lib.e4asm.context import merge_contexts
 # importar los registros
 from e4lib.e4asm.registers import e4asm_registers as registers
+# modulos
+import e4lib.e4asm.module as e4lib_modules
+# variables
+search_module = e4lib_modules.search_module
+search_namespace = e4lib_modules.search_namespace
 # el solve
 assemble_solve = AssemblerContext.assemble_solve
 # mover datos
@@ -156,14 +165,122 @@ def assemble_ret():
     return [opcode]
 # ensambla una linea
 def assemble_line(line, context:AssemblerContext, len:int):
-    line = line.split(";")[0].strip()
+    line:str = line.split(";")[0].strip()
     if not line:
         return []
 
     parts = line.split()
     instr = parts[0].lower()
 
-    if instr == "label":
+    if line == "@exports" or line == "@analyzer_clear" or line.startswith("@considerate ") or line == "@begins_analyzer" or line == "@ends_analyzer" or line == "@ends_analyzer" or line == "@runtime_function":
+        return []
+
+    if (line.split(";")[0].strip()).split("<-")[0].strip() == "import":
+        module = (line.split(";")[0].strip()).split("<-")[1].strip()
+
+        modulea = search_module(module, context.bindings, len)
+
+        if isinstance(modulea, tuple):
+            code, context_module = modulea
+
+            return code
+        else:
+            module = modulea
+            context.modules.append(module)
+            return []
+    
+    match_namespace = (re.match(r"^namespace\s+(\w+)\s+<-\s+([\w.]+)$", line.split(";")[0].strip()))
+
+    if match_namespace:
+        alias = match_namespace.group(1)
+        src   = match_namespace.group(2)
+
+        joina = search_namespace(src, alias)
+
+        for mod_alias, path in joina.items():
+            context.bindings[mod_alias] = path
+
+        return []
+    for module in context.modules:
+        for name, expand in module.macros.items():
+            # matchear
+            match = re.match(name, line)
+            # si matchea
+            if match:
+                # parametros
+                params = match.groups()
+                # funcion
+                func = expand
+                # indice
+                index = 1
+                # parametros
+                for param in params:
+                    func = func.replace("@param" + str(index), str(param))
+                    index += 1
+                # contenido
+                content = func.replace("\r", "\n").split("\n")
+                # pc
+                pc = 0
+                # recorrer lineas
+                for line in content:
+                    # partes
+                    parts = line.split(";")[0].strip().split()
+                    # si no hay partes continuar
+                    if not parts: continue
+                    # instruccion
+                    instr = parts[0].lower()
+                    # si es una funcion
+                    if instr == "label":
+                        # nombre
+                        name = parts[1].split(",")[0]
+                        # añadir
+                        context.symbols[name] = pc
+                    else:
+                        # calcula tamaño de instrucción para avanzar pc
+                        pc += instr_length(line, context, pc)
+
+                # Segunda pasada: ensamblar
+                program = []
+                # program counter
+                pc = 0
+                # las lineas
+                for line in content:
+                    # bytes de la instruccion
+                    instr_bytes = assemble_line(line, context, pc)
+                    # programa
+                    program += instr_bytes
+                    # longitud
+                    pc += instr_bytes.__len__()
+                return program
+
+    match_struct_new = (re.match(r"^imp\s+(\w+)\s+at\s+(\w+)", line.split(";")[0].strip()))
+    if match_struct_new:
+        stru, at = match_struct_new.group(1),  match_struct_new.group(2)
+        struct = context.structs.get(stru)
+
+        context.add_variable(at, 0)
+
+        for db_field in struct:
+            size = int(assemble_solve(db_field[1],context))
+            context.add_variable(at + "." + db_field[0], size)
+
+        return []
+
+    match_variables_new = re.match(r"(\w+)\s*=\s*@size\((\d+)\)", line.split(";")[0].strip())
+    if match_variables_new:
+        # grupos
+        name, size = match_variables_new.groups()
+    
+        # Registrar variable en el contexto
+        context.add_variable(name, int(size))
+
+        return []
+    
+    if instr == "debugger.dbg":
+        print(context.structs)
+        print(context.symbols)
+
+    elif instr == "label":
         context.symbols
         name = parts[1].split(",")[0]
 
@@ -182,15 +299,23 @@ def assemble_line(line, context:AssemblerContext, len:int):
         dst = prts[0]
         is_pub_alias = False
         is_pul_alias = False
-        if dst.startswith("[byte]"):
+        if dst.startswith("[byte]") or dst.startswith("(byte)"):
             is_pub_alias = True
-        elif dst.startswith("[dword]"):
+        elif dst.startswith("[dword]") or dst.startswith("(dword)"):
             is_pul_alias = True
 
         if not is_pub_alias and not is_pul_alias:
             src = None
             if prts.__len__() == 2:
                 src = prts[1]
+            # es literal
+            if src is not None and not (src in registers):
+                return (
+                    assemble_line("push off", context, len)             +
+                    assemble_line(("align " + src), context, len)       +
+                    assemble_line("mov " + dst + ",off", context, len)  +
+                    assemble_line("pop off", context, len)
+                    )
             return assemble_mov(dst, src)
         elif is_pul_alias:
             return assemble_pul(assemble_solve(dst[7:], context))
@@ -353,7 +478,7 @@ def assemble_line(line, context:AssemblerContext, len:int):
         # en linea
         inline = []
 
-        if action == "mov":
+        if action == "mov" or action == "=":
             index = "0"
             # si es mayor
             if parts.__len__() == 4:
@@ -467,25 +592,136 @@ def assemble_line(line, context:AssemblerContext, len:int):
             return inline
     else:
         return []
-def instr_length(line, context):
+def instr_length(line, context, pc):
     parts = line.split(";")[0].strip().split()
     if not parts:
         return 0
     instr = parts[0].lower()
 
+    line:str = line.split(";")[0].strip()
+
+    if line == "@exports" or line == "@analyzer_clear" or line.startswith("@considerate ") or line == "@begins_analyzer" or line == "@ends_analyzer" or line == "@ends_analyzer" or line == "@runtime_function":
+        return 0
+    
+    if (line.split(";")[0].strip()).split("<-")[0].strip() == "import":
+        module = (line.split(";")[0].strip()).split("<-")[1].strip()
+
+        modulea = search_module(module, context.bindings, pc)
+
+        if isinstance(modulea, tuple):
+            code, context_module = modulea
+
+            return len(code)
+        else:
+            module = modulea
+            context.modules.append(module)
+            return 0
+
+    match_struct_new = (re.match(r"^imp\s+(\w+)\s+at\s+(\w+)$", line.split(";")[0].strip()))
+    if match_struct_new:
+        return 0
+
+    for module in context.modules:
+        for name, expand in module.macros.items():
+            # matchear
+            match = re.match(name, line)
+            # si matchea
+            if match:
+                # parametros
+                params = match.groups()
+                # funcion
+                func = expand
+                # indice
+                index = 1
+                # parametros
+                for param in params:
+                    func = func.replace("@param" + str(index), str(param))
+                    index += 1
+                # contenido
+                content = func.replace("\r", "\n").split("\n")
+                # pc
+                pc = 0
+                # recorrer lineas
+                for line in content:
+                    # partes
+                    parts = line.split(";")[0].strip().split()
+                    # si no hay partes continuar
+                    if not parts: continue
+                    # instruccion
+                    instr = parts[0].lower()
+                    # si es una funcion
+                    if instr == "label":
+                        # nombre
+                        name = parts[1].split(",")[0]
+                        # añadir
+                        context.symbols[name] = pc
+                    else:
+                        # calcula tamaño de instrucción para avanzar pc
+                        pc += instr_length(line, context, pc)
+
+                # Segunda pasada: ensamblar
+                program = []
+                # program counter
+                pc = 0
+                # las lineas
+                for line in content:
+                    # bytes de la instruccion
+                    instr_bytes = assemble_line(line, context, pc)
+                    # programa
+                    program += instr_bytes
+                    # longitud
+                    pc += len(instr_bytes)
+                return len(program)
+    
+    match_variables_new = re.match(r"(\w+)\s*=\s*@size\((\d+)\)", line.split(";")[0].strip())
+    if match_variables_new:
+        # grupos
+        name, size = match_variables_new.groups()
+    
+        # Registrar variable en el contexto
+        context.add_variable(name, int(size))
+
+        return 0
+    
+    match_namespace = (re.match(r"^namespace\s+(\w+)\s+<-\s+([\w.]+)$", line.split(";")[0].strip()))
+
+    if match_namespace:
+        alias = match_namespace.group(1)
+        src   = match_namespace.group(2)
+
+        joina = search_namespace(src, alias)
+
+        for mod_alias, path in joina.items():
+            context.bindings[mod_alias] = path
+
+        return 0
+
     if instr == "label":
+        return 0
+    elif instr == "debugger.dbg":
         return 0
     elif instr == "mov":
         prts:list[str] = parts[1].split(",")
         dst = prts[0]
         is_pub_alias = False
         is_pul_alias = False
-        if dst.startswith("[byte]"):
+        if dst.startswith("[byte]") or dst.startswith("(byte)") :
             is_pub_alias = True
-        elif dst.startswith("[dword]"):
+        elif dst.startswith("[dword]") or dst.startswith("(dword)"):
             is_pul_alias = True
 
         if not is_pub_alias and not is_pul_alias:
+            src = None
+            if prts.__len__() == 2:
+                src = prts[1]
+            # es literal
+            if src is not None and not (src in registers):
+                return (
+                    instr_length("push off", context, pc)             +
+                    instr_length(("align " + src), context, pc)       +
+                    instr_length("mov " + dst + ",off", context, pc)  +
+                    instr_length("pop off", context, pc)
+                    )
             return 2
         elif is_pul_alias:
             return 5
@@ -543,6 +779,7 @@ def instr_length(line, context):
 
     # en el contexto
     else:
+        print(line)
         # la variable
         variable = instr
         # la accion
@@ -552,116 +789,116 @@ def instr_length(line, context):
         # en linea
         inline = 0
 
-        if action == "mov":
+        if action == "mov" or action == "=":
             index = "0"
             # si es mayor
             if parts.__len__() == 4:
                 index = parts[3]
             # ivar var,0
-            inline += instr_length("ivar " + variable + ",0", context)
+            inline += instr_length("ivar " + variable + ",0", context, pc)
             # align 0
-            inline += instr_length("align " + index, context)
+            inline += instr_length("align " + index, context, pc)
             # mov [byte]inmediato
-            inline += instr_length("mov " + value, context)
+            inline += instr_length("mov " + value, context, pc)
             # align 0
-            inline += instr_length("align 0", context)
+            inline += instr_length("align 0", context, pc)
             return inline
         elif action == "add":
             index = "0"
             if len(parts) == 4:
                 index = parts[3]
             # ivar var,0
-            inline += instr_length(f"ivar {variable},0", context)
+            inline += instr_length(f"ivar {variable},0", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # gub a
-            inline += instr_length("gub a", context)
+            inline += instr_length("gub a", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # mov valor
-            inline += instr_length(f"mov {value}", context)
+            inline += instr_length(f"mov {value}", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # gub b
-            inline += instr_length("gub b", context)
+            inline += instr_length("gub b", context, pc)
             # add a,b
-            inline += instr_length("add a,b", context)
+            inline += instr_length("add a,b", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # mov [byte]a
-            inline += instr_length("mov [byte]a", context)
+            inline += instr_length("mov [byte]a", context, pc)
         elif action == "sub":
             index = "0"
             if len(parts) == 4:
                 index = parts[3]
             # ivar var,0
-            inline += instr_length(f"ivar {variable},0", context)
+            inline += instr_length(f"ivar {variable},0", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # gub a
-            inline += instr_length("gub a", context)
+            inline += instr_length("gub a", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # mov valor
-            inline += instr_length(f"mov {value}", context)
+            inline += instr_length(f"mov {value}", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # gub b
-            inline += instr_length("gub b", context)
+            inline += instr_length("gub b", context, pc)
             # add a,b
-            inline += instr_length("sub a,b", context)
+            inline += instr_length("sub a,b", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # mov [byte]a
-            inline += instr_length("mov [byte]a", context)
+            inline += instr_length("mov [byte]a", context, pc)
         elif action == "div":
             index = "0"
             if len(parts) == 4:
                 index = parts[3]
             # ivar var,0
-            inline += instr_length(f"ivar {variable},0", context)
+            inline += instr_length(f"ivar {variable},0", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # gub a
-            inline += instr_length("gub a", context)
+            inline += instr_length("gub a", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # mov valor
-            inline += instr_length(f"mov {value}", context)
+            inline += instr_length(f"mov {value}", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # gub b
-            inline += instr_length("gub b", context)
+            inline += instr_length("gub b", context, pc)
             # add a,b
-            inline += instr_length("div a,b", context)
+            inline += instr_length("div a,b", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # mov [byte]a
-            inline += instr_length("mov [byte]a", context)
+            inline += instr_length("mov [byte]a", context, pc)
         elif action == "mul":
             index = "0"
             if len(parts) == 4:
                 index = parts[3]
             # ivar var,0
-            inline += instr_length(f"ivar {variable},0", context)
+            inline += instr_length(f"ivar {variable},0", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # gub a
-            inline += instr_length("gub a", context)
+            inline += instr_length("gub a", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # mov valor
-            inline += instr_length(f"mov {value}", context)
+            inline += instr_length(f"mov {value}", context, pc)
             # dec off
-            inline += instr_length("dec off", context)
+            inline += instr_length("dec off", context, pc)
             # gub b
-            inline += instr_length("gub b", context)
+            inline += instr_length("gub b", context, pc)
             # add a,b
-            inline += instr_length("mul a,b", context)
+            inline += instr_length("mul a,b", context, pc)
             # align index
-            inline += instr_length(f"align {index}", context)
+            inline += instr_length(f"align {index}", context, pc)
             # mov [byte]a
-            inline += instr_length("mov [byte]a", context)
+            inline += instr_length("mov [byte]a", context, pc)
 
-            print(inline)
             return inline
+        return 0

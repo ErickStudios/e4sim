@@ -1,9 +1,19 @@
+# arboles
+import threading
+# tiempo
+import time
+# importar la mdt
+from e4lib.e4arch.protected.mdt import e4arch_MDTEntry
+# importar excepciones
+from e4lib.e4arch.protected.exceptions import e4arch_exception
 # la maquina virtual
 class e4arch:
     # inicializa
     def __init__(self, mem_size=4194304):
         # memoria
         self.mem = bytearray(mem_size)
+        # flagoff
+        self.flagoff = False
         # registros
         self.reg = { 'a':0, 'b':0, 'c':0, 'd':0, 'e':0, 'f':0, 'ds':0, 'off':0,'cycl':0,'sp':mem_size-80}
         # program counter
@@ -16,6 +26,30 @@ class e4arch:
         self.pc_fetch = None
         # en halt mode
         self.in_halt_mode = False
+        # compuerta protejido, arranca en modo 'base'
+        self.protect_no_base_mode = False
+        # ah?
+        self.know_know = 0
+        # crear los eventos
+        threading.Thread(target=self._extern_events_).start()
+    # eventos externos
+    def _extern_events_(self):
+        # ejecutar
+        while True:
+            if self.flagoff:
+                return
+
+            # funciones de modo base
+            if not self.protect_no_base_mode:
+                pass
+            # funciones si esta en modo protejido
+            if self.protect_no_base_mode:
+                # si esta recien empezando crear
+                if not hasattr(self, "mdt_vector"): self.mdt_vector:dict[int, e4arch_MDTEntry] = dict()
+                if not hasattr(self, "mdt_entry_set"): self.mdt_entry_set:int = int()
+                if not hasattr(self, "protected_ring3"): self.protected_ring3:bool = bool()
+            # dormir
+            time.sleep(2)
     # obtener
     def fetch(self, program):
         # obtener instruccion
@@ -43,17 +77,17 @@ class e4arch:
         # interrupciones flag
         interruption_flag_direction = 0xac01
 
-        # si se tiene que despertar y esta en hlt
-        if self.mem[hlt_no_direction] == 1 and self.in_halt_mode:
-            # setear a 0
-            self.mem[hlt_no_direction] = 0
-            # despertar
-            self.in_halt_mode = False
+        # que 💀
+        mck = False
 
-        # si esta en hlt
+        # hacerlo
         if self.in_halt_mode:
-            # no hacer nada
-            return
+            # revisar si hay interrupción pendiente y habilitada
+            if self.mem[hlt_no_direction] == 1 and self.mem[interruption_flag_direction] == 1:
+                self.mem[hlt_no_direction] = 0
+                self.in_halt_mode = False
+            else:
+                return
 
         # operacion
         op = self.fetch(program)
@@ -62,6 +96,9 @@ class e4arch:
             dst = (operand >> 4) & 0xF
             src = operand & 0xF
             self._set_reg(dst, self._get_reg(src))
+
+            # --firmware: ah?
+            if dst == 0x7 and src == 0x7 and self.know_know == 1: mck = True
 
         elif op == 0x02:  # ivar size addr
             size = self.read_byte(program)
@@ -90,6 +127,12 @@ class e4arch:
             self.mem[self.reg['sp'] + 1] = (val >> 8) & 0xFF
             self.mem[self.reg['sp'] + 2] = (val >> 16) & 0xFF
             self.mem[self.reg['sp'] + 3] = (val >> 24) & 0xFF
+
+            # --firmware: que? 💀
+            if reg_code == 0x8 and self.know_know == 0: mck = True
+
+            # --firmware: q?
+            if reg_code == 0x1 and self.know_know == 2: mck = True
 
         elif op == 0x06:  # pop reg (i32)
             reg_code = self.read_byte(program)
@@ -161,6 +204,8 @@ class e4arch:
             register = self.read_byte(program)
             self._set_reg(register, self.mem[self.reg["ds"] + self.reg["off"]])
             self.reg['off'] += 1
+            # --firmware: q?
+            if register == 0x1 and self.know_know == 3: mck = True
 
         elif op == 0x10: # dbg reg
             register = self.read_byte(program)
@@ -178,6 +223,10 @@ class e4arch:
             if 0 <= addr < len(self.mem):
                 self.mem[addr] = self._get_reg(val)
             self.reg['off'] += 1
+
+            # --firmware: noo,me van a matar causa
+            if val == 0x1 and self.know_know == 5: mck = True
+
         elif op == 0x15:  # pul = put long (32 bits)
             val = self.read_u32_be(program)              # lee un entero de 32 bits
             addr = self.reg['ds'] + self.reg['off']      # calcula dirección base
@@ -206,6 +255,9 @@ class e4arch:
 
             self.reg['off'] += 4                            # avanzar 4 posiciones
         elif op == 0x17:  # loop addr
+            # --firmware: este es mi fin
+            if self.know_know == 7: mck = True
+
             addr = self.read_u32_be(program)   # dirección del bloque
             if self.reg['cycl'] > 0:
                 self.reg['cycl'] -= 1
@@ -271,9 +323,16 @@ class e4arch:
             reg = self.read_byte(program)
 
             self._set_reg(reg, self._get_reg(reg) + 1)
+            # --firmware: pipipi
+            if reg == 0x8 and self.know_know == 6: mck = True
+
         elif op == 0x1F: # dec
             reg = self.read_byte(program)
             self._set_reg(reg, self._get_reg(reg) - 1)
+
+            # --firmware: a huevo... espera que
+            if reg == 0xA and self.know_know == 4: mck = True
+
         elif op == 0x20: # int
             reg = self.read_byte(program)
             interruption = self._get_reg(reg)
@@ -297,6 +356,43 @@ class e4arch:
             self._set_reg(dst, val)
         else:
             pass
+
+        if not self.protect_no_base_mode:
+            if mck == True:
+                print("e4arch_32: Level Up is coming, don't ruin it.")
+                self.know_know += 1
+            else:
+                if (self.know_know != 0): print("e4arch_32: You were close, very close, but it was ruined; the firmware survives one more day.")
+                self.know_know = 0
+
+            if self.know_know == 8 and mck == True:
+                print("e4arch_32: protecte mode actived")
+                self.protect_no_base_mode = True
+                self.know_know = 0
+    # manda algo al puerto
+    def send_device(self, puerto, dato):
+        # modificar el mdt_entry_set
+        if puerto == 0x3DD:
+            self.mdt_entry_set = dato
+            return
+        
+        # modificar una entrada
+        if puerto == 0x3DE:
+            # lanzar un not ready exception
+            if (not self.protect_no_base_mode): e4arch_exception("NR")
+            # si esta en modo ring3
+            if (self.protected_ring3): e4arch_exception("GP")
+            # entrada a setear
+            self.mdt_vector[self.mdt_entry_set] = e4arch_MDTEntry.from_memory(mem=self.mem, offset=dato)
+            return
+
+        self.pc_fetch._io_outpud_(puerto, dato)
+    # recibe algo de un puerto
+    def recive_device(self, puerto):
+        if (puerto == 0x3DD):
+            return self.mdt_entry_set
+
+        return self.pc_fetch._io_input_(puerto)
     # obtiene un registro
     def _get_reg(self, code):
         # mapa inverso según registers
@@ -305,14 +401,14 @@ class e4arch:
         name = table.get(code)
         # retornarlo
         return self.reg[name] if name else 0
-    # hacer in
+    # hacer ind
     def _io_in_(self, reg1a, reg2a):
         # registro 1
         reg1 = self._get_reg(reg1a)
         # registro 2
         reg2 = self._get_reg(reg2a)
         # datos
-        data = self.pc_fetch._io_input_(reg1)
+        data = self.recive_device(reg1)
         # enviar dato
         self._set_reg(reg2a, data)
     # hacer out
@@ -322,7 +418,7 @@ class e4arch:
         # registro 2
         reg2 = self._get_reg(reg2a)
         # enviar dato
-        self.pc_fetch._io_outpud_(reg1, reg2)
+        self.send_device(reg1, reg2)
     # setear registro
     def _set_reg(self, code, value):
         table = {1:'a',2:'b',3:'c',4:'d',5:'e',6:'f',7:'ds', 8:'cycl', 9:'sp', 10:'off'}

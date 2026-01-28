@@ -1,0 +1,314 @@
+; continuacion de bsex.asm
+
+; importar hla
+import <- hla
+; agregrar el namespace para que lo encuentre el compilador
+namespace kernel <- examples.kernel
+; importar el kernel
+import <- kernel.kernel
+
+; caracter actual
+ActualCharacter = @size(4)
+; caracter actual antiguo
+OldActualCharacter = @size(4)
+
+; prompt actual
+Prompt = @size(40)
+; archivo que comparara
+FileComparate = @size(40)
+; caracter actual de prompt
+PromptCurrChar = @size(4)
+
+align 0
+ivar Prompt,0
+; inicializar variables
+init_variable_u32 ActualCharacter
+init_variable_u32 OldActualCharacter
+
+align 5
+mov cycl,off
+align 0
+ivar 0xBB2,0
+
+kernel_printchar 'W'
+kernel_printchar 'e'
+kernel_printchar 'l'
+kernel_printchar 'c'
+kernel_printchar 'o'
+kernel_printchar 'm'
+kernel_printchar 'e'
+kernel_printchar 32
+kernel_printchar 't'
+kernel_printchar 'o'
+kernel_printchar 32
+kernel_printchar 'e'
+kernel_printchar '4'
+kernel_printchar 'o'
+kernel_printchar 's'
+
+call UpdateLine
+call new_line_and_prompt
+call main
+
+; obtiene un archivo y lo compara con el prompt
+label getf_cmp
+    ; obtener nombre
+    push cycl                           ; guardar cycl
+    call load_dword                     ; carga la dword
+    mov cycl,d                          ; guardar en cycl
+    push cycl                           ; guardar
+    ivar FileComparate,0                ; comparacion
+    align 0                             ; guardar
+    call getf_cmp_nm_loop               ; loopear
+    pop cycl                            ; recuperar cycl
+    mov a,ds                            ; a->ds
+    push ds                             ; guardar ds
+    ivar Prompt,0                       ; ds->&Prompt
+    mov b,ds                            ; b->ds
+    pop ds                              ; cargar ds
+    call strcmp                         ; comparar
+    mov b,1                             ; b->1
+    cmp c,b                             ; comparar
+
+    ret
+
+; loop de obtener nombre
+label getf_cmp_nm_loop
+    ; guardar en el nombre y loopear
+    call load_byte                      ; cargar byte
+    mov [byte]c                         ; cargar
+    loop getf_cmp_nm_loop               ; loopear
+    ret
+
+; carga un byte desde la usb
+label load_byte
+    ; cargar byte
+    push off                            ; guardar off
+    align 0x31                          ; el alineador
+    in off,c                            ; el alineado
+    pop off                             ; cargar off
+
+    ret
+
+; carga un u32 desde la usb
+label load_dword
+    ; cargar el tamaño
+    mov f,8                             ; offsets
+    mov d,0                             ; datos
+
+    ; cargar
+    call load_byte                      ; cargar
+    add d,c                             ; añadir
+    shl d,f                             ; shiftear
+    call load_byte                      ; cargar
+    add d,c                             ; añadir
+    shl d,f                             ; shiftear
+    call load_byte                      ; cargar
+    add d,c                             ; añadir
+    shl d,f                             ; shiftear
+    call load_byte                      ; cargar
+    add d,c                             ; añadir
+
+    ret
+
+; el loop
+label main
+    ; hace la espera
+    sti                                     ; activar interrupciones
+    hlt                                     ; esperar
+
+    ; leer el caracter
+    push off                                ; guardar off
+    align 0x20                              ; setear off     
+    in off,a                                ; obtener el puerto al que apunta off
+    pop off                                 ; cargar off
+    call putchar                            ; imprimir caracter
+    call putpchar                           ; poner en el prompt
+
+    ; si es Enter
+    push off                                ; guardar off
+    align 13                                ; setear off al CR
+    cmp a,off                               ; comparar
+    pop off                                 ; recuperar off
+    cq new_line_and_prompt                  ; si es enter nueva linea y cargar un nuevo prompt
+
+    ; loopear
+    inc cycl                                ; incrementar cycl para que no termine
+    loop main                               ; loopear
+    cli                                     ; desactivar interrupciones
+    hlt                                     ; haltear
+
+; pone un caracter
+label putchar
+    ; imprimir el caracter
+    mov [byte]a                             ; la letra
+    mov [byte]0x0F                          ; el atributo de texto
+
+    ret
+
+; actualiza la linea
+label UpdateLine
+    ; guardar registros
+    push off                                ; guardar off
+    push ds                                 ; guardar ds
+
+    ; obtener la linea actual
+    ivar OldActualCharacter,0               ; ds->&OldActualCharacter
+    align 0                                 ; alinear a 0
+    gul b                                   ; obtener valor como u32
+
+    ; el offset
+    mov c,80                                ; setear valor
+    align 2                                 ; alinear a 2
+    mul c,off                               ; c*2
+    add b,c                                 ; b+c
+
+    ; actualizar variables
+    ivar ActualCharacter,0                  ; actualizar el caracter
+    align 0                                 ; off->0
+    mov b                                   ; setear valor
+    ivar OldActualCharacter,0               ; actualizar el caracter anterior
+    align 0                                 ; off->0
+    mov b                                   ; setear valor
+
+    ; recuperar
+    pop ds                                  ; recuperar ds
+    pop off                                 ; recuperar off
+    mov off,b                               ; el nuevo valor de offset
+
+    ret
+
+; dibuja el prompt
+label draw_prompt
+    ; dibujar el prompt
+    mov a,'s'                               ; caracter
+    call putchar                            ; imprimirlo
+    mov a,'y'                               ; caracter
+    call putchar                            ; imprimirlo
+    mov a,'s'                               ; caracter
+    call putchar                            ; imprimirlo
+    mov a,':'                               ; caracter
+    call putchar                            ; imprimirlo
+    mov a,'~'                               ; caracter
+    call putchar                            ; imprimirlo
+    mov a,'#'                               ; el caracter
+    call putchar                            ; imprimirlo
+    mov a,32                                ; el espacio
+    call putchar                            ; imprimirlo
+
+    ret
+
+; nueva linea y prompt
+label new_line_and_prompt
+    ; dibujar prompt
+    call UpdateLine                         ; nueva linea
+    call draw_prompt                        ; nuevo prompt
+
+    ; guardar
+    push ds                                 ; ds
+    push off                                ; off
+
+    ; setear el index char a 0
+    ivar PromptCurrChar,0                   ; setearlo
+    align 0                                 ; setearlo
+    pul 0                                   ; setearlo
+
+    ; setear a 0
+    ivar Prompt,0                           ; setear prompt
+    align 0                                 ; alinear a 0
+    pub 0                                   ; poner byte 0
+
+    ; cargar
+    pop off                                 ; off
+    pop ds                                  ; ds
+    ret
+; nuevo comando
+label new_command
+    ; comando nuevo
+    call getf_cmp                           ; comparar
+    call new_line_and_prompt                ; nueva linea
+    ret
+; añadir caracter al prompt
+label putpchar
+
+    ; guardar
+    push ds                                 ; ds
+    push off                                ; off
+    push cycl                               ; cycl
+    push a                                  ; a
+
+    ; cargar el valor del a
+    ivar PromptCurrChar,0                   ; ds->&PromptCurrChar
+    align 0                                 ; alinear a 0
+    gul a                                   ; cargar a como un u32
+
+    ; agregar al prompt
+    ivar Prompt,0                           ; ds->&Prompt
+    mov off,a                               ; mover off a a
+    mov cycl,a                              ; mover ciclos
+    pop a                                   ; recuperar a para cargarla
+    mov [byte]a                             ; guardarlo
+    push a                                  ; guardar a
+    mov a,cycl                              ; a->cycl
+
+    ; sumar caracter
+    ivar PromptCurrChar,0                   ; el caracter
+    inc a                                   ; incrementar
+    align 0                                 ; alinear a 0
+    mov a                                   ; cargar u32
+
+    ; cargar
+    pop a                                   ; a
+    pop cycl                                ; cycl
+    pop off                                 ; off
+    pop ds                                  ; ds
+
+    ret
+
+; comparar strings
+label strcmp
+    ; comparar
+    push f                                  ; guardar f
+    mov f,0                                 ; preparar el index
+    call strcmp_loop                        ; llamar al comparador
+    pop f                                   ; cargar f
+    ret
+
+; loop
+label strcmp_loop
+    ; guardar
+    push off                                ; guardar off
+    push ds                                 ; guardar ds
+    push d                                  ; guardar d
+    push e                                  ; guardar e
+
+    ; obtener el caracter de ambos strings
+    mov ds,a                                ; primera direccion
+    mov off,f                               ; mover f a off
+    gub d                                   ; obtener byte
+    mov ds,b                                ; segunda direccion
+    mov off,f                               ; mover f a off
+    gub e                                   ; obtener byte
+
+    ; comparar
+    cmp d,e                                 ; compara d y e
+
+    ; cargar
+    pop e                                   ; cargar e
+    pop d                                   ; cargar d
+    pop ds                                  ; cargar ds
+    pop off                                 ; cargar off
+
+    ; siguiente
+    mov c,1                                 ; mover
+    cnq strcmp_fail                         ; si no son equivalentes
+    inc f                                   ; incrementar indice
+    loop strcmp_loop                        ; loopear
+    ret
+
+; si ya no es
+label strcmp_fail
+    ; no son iguales los chars
+    mov c,0                                 ; comparador es 0
+    mov cycl,0                              ; terminar
+    ret

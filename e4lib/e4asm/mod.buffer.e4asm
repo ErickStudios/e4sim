@@ -1,0 +1,95 @@
+@module_executable
+; importar bindings para automatizar que haya new
+import <- bindings
+; llamar al final del modulo
+call _buffer_e4asm_end_module_
+; buffer leible
+trait ReadableBuffer {
+    ; campos primitivos
+    needs Size                          ; tamaño
+    needs Content                       ; contenido
+    ; funciones primitivas
+    needs label_Read                   ; lectura
+}
+; buffer dinamico
+stru ReadableBufferDynamic {
+    ; implementa eso
+    imps trait ReadableBuffer           ; necesita ser leible
+    ; campos
+    .Content db 4                       ; contenido (byte*)
+    .Size db 4                          ; Tamaño (u32)
+    ; funciones
+    .label_Read db 4                    ; funcion de lectura
+}
+; leer buffer
+@exports
+label ReadBuffer
+    ; parametros
+    @analyzer_clear
+    @considerate self=a                 ; el self
+    @considerate dst=b                  ; el destino
+
+    ; decirle al analizador que empieze a considerar las reglas puestas    
+    @begins_analyzer
+
+    ; guardar
+    push ds                             ; guardar ds
+    push off                            ; guardar off
+    push cycl                           ; guardar cycl
+
+    ; obtener el tamaño
+    mov ds,a                            ; obtener tamaño
+    gul cycl                            ; obtenerlo
+    gul cycl                            ; obtenerlo en cycl
+
+    ; obtener el contenido
+    mov ds,a                            ; obtener puntero a self
+    align 0                             ; alinear a 0
+    gul ds                              ; obtener el puntero en ds
+
+    ; copiar el contenido
+    call ReadBufferLoop                 ; llamar a el loop
+
+    ; recuperar
+    pop cycl                            ; recuperar cycl
+    pop off                             ; recuperar off
+    pop ds                              ; recuperar ds
+    ret
+; stub para ayudar a ReadBuffer
+@runtime_function
+label ReadBufferLoop
+    ; guardar byte en el dst
+    push ds                             ; guardar ds
+    push c                              ; guardar c
+    gub c                               ; guardar el byte alli
+    mov ds,b                            ; mover
+    dec off                             ; decrementar off
+    mov [byte]c                         ; poner c en el dst
+    pop c                               ; recuperar c
+    pop ds                              ; recuperar ds
+
+    ; final
+    loop ReadBufferLoop                 ; loopear
+    ret
+    @ends_analyzer
+; constructor
+@exports
+label _ReadableBuffer_new
+    @analyzer_clear
+    @considerate self=ds                ; el self
+
+    ; guardar
+    push off                            ; poner off
+
+    align 0                             ; offset 0
+    pul 0                               ; poner (dword)0 en content
+    pul 0                               ; poner (dword)0 en size
+    pul ReadBuffer                      ; para leer
+
+    ; recuperar
+    pop off                             ; recuperar off
+
+    ret
+    @ends_analyzer
+; fin del modulo
+label _buffer_e4asm_end_module_
